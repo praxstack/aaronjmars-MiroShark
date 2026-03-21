@@ -1,5 +1,5 @@
 """
-MiroFish Backend entry point
+MiroShark Backend entry point
 """
 
 import os

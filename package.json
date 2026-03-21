@@ -1,7 +1,7 @@
 {
-  "name": "mirofish",
+  "name": "miroshark",
   "version": "0.1.0",
-  "description": "MiroFish - A concise and versatile swarm intelligence engine for predicting everything",
+  "description": "MiroShark - A concise and versatile swarm intelligence engine for predicting everything",
   "scripts": {
     "setup": "npm install && cd frontend && npm install",
     "setup:backend": "cd backend && uv sync",

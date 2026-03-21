@@ -23,7 +23,7 @@ from ..utils.logger import get_logger
 from .zep_graph_memory_updater import ZepGraphMemoryManager
 from .simulation_ipc import SimulationIPCClient, CommandType, IPCResponse
 
-logger = get_logger('mirofish.simulation_runner')
+logger = get_logger('miroshark.simulation_runner')
 
 # Flag for whether cleanup function has been registered
 _cleanup_registered = False

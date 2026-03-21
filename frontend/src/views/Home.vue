@@ -2,9 +2,9 @@
   <div class="home-container">
     <!-- Top Navigation Bar -->
     <nav class="navbar">
-      <div class="nav-brand">MIROFISH</div>
+      <div class="nav-brand">MIROSHARK</div>
       <div class="nav-links">
-        <a href="https://github.com/666ghj/MiroFish" target="_blank" class="github-link">
+        <a href="https://github.com/aaronjmars/MiroShark" target="_blank" class="github-link">
           Visit Our GitHub Homepage <span class="arrow">↗</span>
         </a>
       </div>
@@ -26,7 +26,7 @@
           
           <div class="hero-desc">
             <p>
-              Even with just a piece of text, <span class=”highlight-bold”>MiroFish</span> can automatically generate a parallel world composed of up to <span class=”highlight-orange”>millions of Agents</span> based on the reality seeds within. Inject variables from a god's-eye view to find the <span class=”highlight-code”>”local optimum”</span> in complex group interactions under dynamic environments.
+              Even with just a piece of text, <span class=”highlight-bold”>MiroShark</span> can automatically generate a parallel world composed of up to <span class=”highlight-orange”>millions of Agents</span> based on the reality seeds within. Inject variables from a god's-eye view to find the <span class=”highlight-code”>”local optimum”</span> in complex group interactions under dynamic environments.
             </p>
             <p class=”slogan-text”>
               Let the future rehearse among Agents, let decisions prevail after countless trials<span class=”blinking-cursor”>_</span>
@@ -39,7 +39,7 @@
         <div class="hero-right">
           <!-- Logo Area -->
           <div class="logo-container">
-            <img src="../assets/logo/MiroFish_logo_left.jpeg" alt="MiroFish Logo" class="hero-logo" />
+            <img src="../assets/logo/miroshark-banner.jpg" alt="MiroShark Logo" class="hero-logo" />
           </div>
           
           <button class="scroll-down-btn" @click="scrollToBottom">
@@ -180,7 +180,7 @@
                   rows="6"
                   :disabled="loading"
                 ></textarea>
-                <div class="model-badge">Engine: MiroFish-V1.0</div>
+                <div class="model-badge">Engine: MiroShark-V1.0</div>
               </div>
             </div>
 
@@ -202,6 +202,11 @@
 
       <!-- History Project Database -->
       <HistoryDatabase />
+
+      <!-- Attribution Footer -->
+      <footer class="attribution-footer">
+        Built on top of <a href="https://github.com/666ghj/MiroFish" target="_blank">MiroFish</a> — thanks to the original authors for the foundation.
+      </footer>
     </div>
   </div>
 </template>
@@ -886,5 +891,22 @@ const startSimulation = () => {
     max-width: 200px;
     margin-bottom: 20px;
   }
+}
+
+.attribution-footer {
+  text-align: center;
+  padding: 20px 0;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 0.85rem;
+}
+
+.attribution-footer a {
+  color: rgba(255, 255, 255, 0.7);
+  text-decoration: none;
+}
+
+.attribution-footer a:hover {
+  color: #fff;
+  text-decoration: underline;
 }
 </style>

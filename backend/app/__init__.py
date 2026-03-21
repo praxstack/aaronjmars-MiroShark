@@ -1,5 +1,5 @@
 """
-MiroFish Backend - Flask application factory
+MiroShark Backend - Flask application factory
 """
 
 import os
@@ -27,7 +27,7 @@ def create_app(config_class=Config):
         app.json.ensure_ascii = False
     
     # Set up logging
-    logger = setup_logger('mirofish')
+    logger = setup_logger('miroshark')
     
     # Only print startup info in the reloader subprocess (avoid printing twice in debug mode)
     is_reloader_process = os.environ.get('WERKZEUG_RUN_MAIN') == 'true'
@@ -36,7 +36,7 @@ def create_app(config_class=Config):
     
     if should_log_startup:
         logger.info("=" * 50)
-        logger.info("MiroFish Backend starting...")
+        logger.info("MiroShark Backend starting...")
         logger.info("=" * 50)
     
     # Enable CORS
@@ -51,14 +51,14 @@ def create_app(config_class=Config):
     # Request logging middleware
     @app.before_request
     def log_request():
-        logger = get_logger('mirofish.request')
+        logger = get_logger('miroshark.request')
         logger.debug(f"Request: {request.method} {request.path}")
         if request.content_type and 'json' in request.content_type:
             logger.debug(f"Request body: {request.get_json(silent=True)}")
     
     @app.after_request
     def log_response(response):
-        logger = get_logger('mirofish.request')
+        logger = get_logger('miroshark.request')
         logger.debug(f"Response: {response.status_code}")
         return response
     
@@ -71,10 +71,10 @@ def create_app(config_class=Config):
     # Health check
     @app.route('/health')
     def health():
-        return {'status': 'ok', 'service': 'MiroFish Backend'}
+        return {'status': 'ok', 'service': 'MiroShark Backend'}
     
     if should_log_startup:
-        logger.info("MiroFish Backend startup complete")
+        logger.info("MiroShark Backend startup complete")
     
     return app
 

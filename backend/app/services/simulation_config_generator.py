@@ -23,7 +23,7 @@ from ..config import Config
 from ..utils.logger import get_logger
 from .zep_entity_reader import EntityNode, ZepEntityReader
 
-logger = get_logger('mirofish.simulation_config')
+logger = get_logger('miroshark.simulation_config')
 
 # China timezone activity configuration (Beijing Time)
 CHINA_TIMEZONE_CONFIG = {

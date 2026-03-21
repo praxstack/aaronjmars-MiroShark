@@ -1,9 +1,9 @@
 services:
-  mirofish:
-    image: ghcr.io/666ghj/mirofish:latest
+  miroshark:
+    image: ghcr.io/aaronjmars/miroshark:latest
     # Mirror image (replace the address above if pulling is slow)
-    # image: ghcr.nju.edu.cn/666ghj/mirofish:latest
-    container_name: mirofish
+    # image: ghcr.nju.edu.cn/aaronjmars/miroshark:latest
+    container_name: miroshark
     env_file:
       - .env
     ports:
