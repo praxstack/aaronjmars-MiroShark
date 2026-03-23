@@ -5,12 +5,8 @@
 <h1 align="center">MiroShark</h1>
 
 <p align="center">
-  <strong>A Simple and Universal Swarm Intelligence Engine — Run Locally or with Any Cloud API</strong><br>
-  Multi-agent simulation engine: upload any document (press release, policy draft, financial report), and it generates hundreds of AI agents with unique personalities that simulate public reaction on social media — posts, arguments, opinion shifts — hour by hour. Runs on Neo4j for the knowledge graph and any OpenAI-compatible API for inference.
-</p>
-
-<p align="center">
-  <img src="./screen1.png" alt="MiroShark Demo" />
+  <strong>Universal Swarm Intelligence Engine — Run Locally or with Any Cloud API</strong><br>
+  Multi-agent simulation engine: upload any document (press release, policy draft, financial report), and it generates hundreds of AI agents with unique personalities that simulate public reaction on social media — posts, arguments, opinion shifts — hour by hour.
 </p>
 
 ---
@@ -20,16 +16,16 @@
 <div align="center">
 <table>
 <tr>
+<td><img src="./screen1.png" width="100%"/></td>
 <td><img src="./screen2.png" width="100%"/></td>
+</tr>
+<tr>
 <td><img src="./screen3.png" width="100%"/></td>
-</tr>
-<tr>
 <td><img src="./screen4.png" width="100%"/></td>
-<td><img src="./screen5.png" width="100%"/></td>
 </tr>
 <tr>
+<td><img src="./screen5.png" width="100%"/></td>
 <td><img src="./screen6.png" width="100%"/></td>
-<td></td>
 </tr>
 </table>
 </div>
