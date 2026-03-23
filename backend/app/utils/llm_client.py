@@ -29,6 +29,28 @@ def create_llm_client(
     return LLMClient(api_key=api_key, base_url=base_url, model=model, timeout=timeout)
 
 
+def create_smart_llm_client(timeout: float = 300.0):
+    """
+    Factory for intelligence-sensitive workflows (reports, ontology, graph reasoning).
+    Uses SMART_* config when set, otherwise falls back to the default LLM client.
+    """
+    if not Config.SMART_MODEL_NAME:
+        return create_llm_client(timeout=timeout)
+
+    provider = Config.SMART_PROVIDER or Config.LLM_PROVIDER
+
+    if provider == 'claude-code':
+        from .claude_code_client import ClaudeCodeClient
+        return ClaudeCodeClient(model=Config.SMART_MODEL_NAME, timeout=timeout)
+
+    return LLMClient(
+        api_key=Config.SMART_API_KEY or Config.LLM_API_KEY,
+        base_url=Config.SMART_BASE_URL or Config.LLM_BASE_URL,
+        model=Config.SMART_MODEL_NAME,
+        timeout=timeout,
+    )
+
+
 class LLMClient:
     """LLM client using OpenAI-compatible APIs"""
 

@@ -33,6 +33,14 @@ class Config:
     LLM_API_KEY = os.environ.get('LLM_API_KEY')
     LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
+
+    # Smart model — optional stronger model for intelligence-sensitive workflows
+    # (report generation, ontology extraction, graph reasoning).
+    # When not set, these workflows use the default LLM config above.
+    SMART_PROVIDER = os.environ.get('SMART_PROVIDER', '')   # "openai", "claude-code", or empty (inherit)
+    SMART_API_KEY = os.environ.get('SMART_API_KEY', '')
+    SMART_BASE_URL = os.environ.get('SMART_BASE_URL', '')
+    SMART_MODEL_NAME = os.environ.get('SMART_MODEL_NAME', '')
     
     # Neo4j configuration
     NEO4J_URI = os.environ.get('NEO4J_URI', 'bolt://localhost:7687')

@@ -221,18 +221,60 @@ A typical simulation runs ~40 turns × 100+ agents. Pick a model that balances c
 
 **Embeddings locally:** `ollama pull nomic-embed-text` — 768 dimensions, matches Neo4j default.
 
-**Hybrid tip:** Run local for simulation rounds (high-volume), route to a cloud model only for final report generation. Most users land here naturally.
+**Hybrid tip:** Run local for simulation rounds (high-volume), route to a cloud model only for final report generation. Most users land here naturally — see **Smart Model** below.
+
+### Smart Model
+
+Set `SMART_MODEL_NAME` to route intelligence-sensitive workflows through a stronger model while keeping everything else on your default (cheaper/faster) model. When not set, all workflows use the same model.
+
+**What uses the smart model:**
+
+| Workflow | Why |
+|---|---|
+| Report generation | Multi-turn reasoning, end-user facing output |
+| Ontology extraction | Foundational — defines the entire knowledge graph schema |
+| Graph reasoning | Sub-question generation, deep search during reports |
+
+**Everything else** (NER extraction, profile generation, simulation config) stays on the default model — these are high-volume and don't need top-tier reasoning.
+
+**Example configs:**
+
+```bash
+# Ollama for bulk work, Claude Code for reports
+LLM_MODEL_NAME=qwen3.5:27b
+SMART_PROVIDER=claude-code
+SMART_MODEL_NAME=claude-sonnet-4-20250514
+
+# Ollama for bulk work, OpenRouter premium for reports
+LLM_MODEL_NAME=qwen3.5:27b
+SMART_PROVIDER=openai
+SMART_API_KEY=sk-or-v1-your-key
+SMART_BASE_URL=https://openrouter.ai/api/v1
+SMART_MODEL_NAME=anthropic/claude-sonnet-4
+
+# Same provider, just a bigger model for reports
+LLM_MODEL_NAME=qwen3:8b
+SMART_MODEL_NAME=qwen3.5:27b
+```
+
+If only `SMART_MODEL_NAME` is set (without `SMART_PROVIDER`/`SMART_BASE_URL`/`SMART_API_KEY`), the smart model inherits the default provider settings — useful when you just want a bigger model on the same backend.
 
 ### Environment Variables
 
 All settings live in `.env` (copy from `.env.example`):
 
 ```bash
-# LLM
+# LLM (default — used for bulk/high-volume workflows)
 LLM_PROVIDER=openai                # "openai" (default) or "claude-code"
 LLM_API_KEY=ollama                  # Not needed for claude-code mode
 LLM_BASE_URL=http://localhost:11434/v1
 LLM_MODEL_NAME=qwen3.5:27b
+
+# Smart model (optional — used for reports, ontology, graph reasoning)
+# SMART_PROVIDER=claude-code       # "openai", "claude-code", or empty (inherit)
+# SMART_MODEL_NAME=claude-sonnet-4-20250514
+# SMART_API_KEY=                    # Only if different from LLM_API_KEY
+# SMART_BASE_URL=                   # Only if different from LLM_BASE_URL
 
 # Claude Code mode (only when LLM_PROVIDER=claude-code)
 # CLAUDE_CODE_MODEL=claude-sonnet-4-20250514

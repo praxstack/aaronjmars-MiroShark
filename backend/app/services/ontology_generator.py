@@ -5,7 +5,7 @@ Interface 1: Analyze text content to generate entity and relationship type defin
 
 import json
 from typing import Dict, Any, List, Optional
-from ..utils.llm_client import LLMClient, create_llm_client
+from ..utils.llm_client import LLMClient, create_smart_llm_client
 
 
 # System prompt for ontology generation
@@ -162,7 +162,7 @@ class OntologyGenerator:
     """
 
     def __init__(self, llm_client: Optional[LLMClient] = None):
-        self.llm_client = llm_client or create_llm_client()
+        self.llm_client = llm_client or create_smart_llm_client()
 
     def generate(
         self,
