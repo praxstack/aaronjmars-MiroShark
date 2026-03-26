@@ -271,16 +271,27 @@ class SimulationIPCClient:
         """
         Check whether the simulation environment is alive
 
-        Determined by checking the env_status.json file
+        Checks the env_status.json file and verifies the PID is still running.
         """
         status_file = os.path.join(self.simulation_dir, "env_status.json")
         if not os.path.exists(status_file):
             return False
-        
+
         try:
             with open(status_file, 'r', encoding='utf-8') as f:
                 status = json.load(f)
-            return status.get("status") == "alive"
+            if status.get("status") != "alive":
+                # Status says not alive — but check if the process is actually
+                # running (handles race where old process overwrites new status)
+                pid = status.get("pid")
+                if pid:
+                    try:
+                        os.kill(pid, 0)  # signal 0 = check if process exists
+                        return False  # PID exists but status is stopped — trust it
+                    except OSError:
+                        pass  # PID is dead
+                return False
+            return True
         except (json.JSONDecodeError, OSError):
             return False
 

@@ -22,8 +22,9 @@ dependencies = [
     # HTTP requests (for Ollama embedding API)
     "requests>=2.31.0",
 
-    # OASIS social media simulation
-    "camel-oasis==0.2.5",
+    # OASIS social media simulation (Wonderwall fork)
+    # Wonderwall (oasis package) is bundled directly in backend/oasis/
+    # "camel-oasis==0.2.5",  # replaced by bundled Wonderwall
     "camel-ai==0.2.78",
 
     # File processing

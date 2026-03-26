@@ -42,6 +42,9 @@ class OasisAgentProfile:
     follower_count: int = 150
     statuses_count: int = 500
     
+    # Polymarket-specific fields
+    risk_tolerance: str = "moderate"  # "high", "moderate", or "low"
+
     # Additional persona information
     age: Optional[int] = None
     gender: Optional[str] = None
@@ -114,6 +117,25 @@ class OasisAgentProfile:
         
         return profile
     
+    def to_polymarket_format(self) -> Dict[str, Any]:
+        """Convert to Polymarket prediction market format.
+
+        Returns a dict compatible with Wonderwall's UserInfo(profile={"other_info": ...})
+        structure, which PolymarketPromptBuilder reads to build trader personas.
+        """
+        # Build the user_profile text from persona + profession context
+        user_profile = self.persona or f"{self.name} participates in prediction markets."
+        if self.profession:
+            user_profile = f"{self.profession}. {user_profile}"
+
+        return {
+            "user_id": self.user_id,
+            "name": self.user_name,
+            "description": self.bio or f"Prediction market trader: {self.name}",
+            "risk_tolerance": self.risk_tolerance,
+            "user_profile": user_profile,
+        }
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to complete dictionary format"""
         return {
@@ -239,12 +261,20 @@ class OasisProfileGenerator:
                 entity_attributes=entity.attributes
             )
         
+        # Derive risk_tolerance from entity type and MBTI if the LLM didn't provide one
+        risk_tolerance = profile_data.get("risk_tolerance")
+        if not risk_tolerance:
+            risk_tolerance = self._infer_risk_tolerance(
+                entity_type, profile_data.get("mbti"), profile_data.get("profession")
+            )
+
         return OasisAgentProfile(
             user_id=user_id,
             user_name=user_name,
             name=name,
             bio=profile_data.get("bio", f"{entity_type}: {name}"),
             persona=profile_data.get("persona", entity.summary or f"A {entity_type} named {name}."),
+            risk_tolerance=risk_tolerance,
             karma=profile_data.get("karma", random.randint(500, 5000)),
             friend_count=profile_data.get("friend_count", random.randint(50, 500)),
             follower_count=profile_data.get("follower_count", random.randint(100, 1000)),
@@ -269,6 +299,32 @@ class OasisProfileGenerator:
         suffix = random.randint(100, 999)
         return f"{username}_{suffix}"
     
+    @staticmethod
+    def _infer_risk_tolerance(entity_type: str, mbti: Optional[str], profession: Optional[str]) -> str:
+        """Infer risk tolerance from entity characteristics for Polymarket profiles."""
+        # Institutional entities tend to be conservative
+        if entity_type and entity_type.lower() in (
+            "governmentagency", "ngo", "institution", "university"
+        ):
+            return "low"
+        # Companies and media tend to be moderate
+        if entity_type and entity_type.lower() in ("company", "mediaoutlet", "organization"):
+            return "moderate"
+        # Derive from MBTI: perceiving types (xNxP) tend to be more risk-tolerant
+        if mbti and len(mbti) == 4:
+            if mbti[1] == 'N' and mbti[3] == 'P':
+                return "high"
+            if mbti[1] == 'S' and mbti[3] == 'J':
+                return "low"
+        # Derive from profession keywords
+        if profession:
+            p = profession.lower()
+            if any(w in p for w in ("trader", "investor", "entrepreneur", "activist")):
+                return "high"
+            if any(w in p for w in ("accountant", "official", "administrator", "lawyer")):
+                return "low"
+        return random.choice(["high", "moderate", "moderate", "low"])
+
     def _search_graph_for_entity(self, entity: EntityNode) -> Dict[str, Any]:
         """
         Use GraphStorage hybrid search to obtain rich information related to entity
@@ -989,6 +1045,8 @@ Important:
         """
         if platform == "twitter":
             self._save_twitter_csv(profiles, file_path)
+        elif platform == "polymarket":
+            self._save_polymarket_json(profiles, file_path)
         else:
             self._save_reddit_json(profiles, file_path)
     
@@ -1111,6 +1169,25 @@ Important:
             json.dump(data, f, ensure_ascii=False, indent=2)
         
         logger.info(f"Saved {len(profiles)} Reddit Profiles to {file_path} (JSON format, includes user_id field)")
+
+    def _save_polymarket_json(self, profiles: List[OasisAgentProfile], file_path: str):
+        """
+        Save Polymarket profiles as JSON format.
+
+        Each entry matches the structure expected by Wonderwall's UserInfo:
+        UserInfo(name=..., description=..., profile={"other_info": {"user_profile": ..., "risk_tolerance": ...}})
+        """
+        data = []
+        for idx, profile in enumerate(profiles):
+            pm = profile.to_polymarket_format()
+            # Override user_id to ensure sequential ordering
+            pm["user_id"] = profile.user_id if profile.user_id is not None else idx
+            data.append(pm)
+
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"Saved {len(profiles)} Polymarket profiles to {file_path}")
 
     # Keep old method name as alias for backward compatibility
     def save_profiles_to_json(

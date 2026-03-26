@@ -121,7 +121,7 @@ class SimulationLogManager:
     Simulation log manager
     Unified management of all log files, separated by platform
     """
-    
+
     def __init__(self, simulation_dir: str):
         """
         Initialize the log manager
@@ -132,6 +132,7 @@ class SimulationLogManager:
         self.simulation_dir = simulation_dir
         self.twitter_logger: Optional[PlatformActionLogger] = None
         self.reddit_logger: Optional[PlatformActionLogger] = None
+        self.polymarket_logger: Optional[PlatformActionLogger] = None
         self._main_logger: Optional[logging.Logger] = None
         
         # Set up main logger
@@ -177,6 +178,12 @@ class SimulationLogManager:
         if self.reddit_logger is None:
             self.reddit_logger = PlatformActionLogger("reddit", self.simulation_dir)
         return self.reddit_logger
+
+    def get_polymarket_logger(self) -> PlatformActionLogger:
+        """Get the Polymarket platform action logger"""
+        if self.polymarket_logger is None:
+            self.polymarket_logger = PlatformActionLogger("polymarket", self.simulation_dir)
+        return self.polymarket_logger
     
     def log(self, message: str, level: str = "info"):
         """Log to the main logger"""

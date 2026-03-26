@@ -1,9 +1,11 @@
 """
-OASIS dual-platform parallel simulation preset script
-Runs Twitter and Reddit simulations concurrently, reading the same configuration file
+Wonderwall multi-platform parallel simulation preset script
+Runs Twitter, Reddit, and Polymarket simulations concurrently, reading the same configuration file
 
 Features:
-- Dual-platform (Twitter + Reddit) parallel simulation
+- Multi-platform (Twitter + Reddit + Polymarket) parallel simulation
+- Polymarket prediction market via Wonderwall's SimulationConfig framework
+- Cross-platform awareness: agents see their activity on other platforms (--cross-platform)
 - Does not close the environment immediately after simulation; enters command waiting mode
 - Supports receiving Interview commands via IPC
 - Supports single Agent interview and batch interview
@@ -11,9 +13,11 @@ Features:
 
 Usage:
     python run_parallel_simulation.py --config simulation_config.json
+    python run_parallel_simulation.py --config simulation_config.json --cross-platform  # Agents aware of their activity on other platforms
     python run_parallel_simulation.py --config simulation_config.json --no-wait  # Close immediately after completion
     python run_parallel_simulation.py --config simulation_config.json --twitter-only
     python run_parallel_simulation.py --config simulation_config.json --reddit-only
+    python run_parallel_simulation.py --config simulation_config.json --polymarket-only
 
 Log structure:
     sim_xxx/
@@ -27,7 +31,7 @@ Log structure:
 
 # ============================================================
 # Fix Windows encoding issues: set UTF-8 encoding before all imports
-# This fixes the issue where OASIS third-party libraries read files without specifying encoding
+# This fixes the issue where Wonderwall third-party libraries read files without specifying encoding
 # ============================================================
 import sys
 import os
@@ -54,7 +58,7 @@ if sys.platform == 'win32':
                    newline=None, closefd=True, opener=None):
         """
         Wrapper for open() that defaults to UTF-8 encoding for text mode
-        This fixes the issue where third-party libraries (e.g., OASIS) read files without specifying encoding
+        This fixes the issue where third-party libraries (e.g., Wonderwall) read files without specifying encoding
         """
         # Only set default encoding for text mode (non-binary) when encoding is not specified
         if encoding is None and 'b' not in mode:
@@ -119,15 +123,15 @@ logging.getLogger().addFilter(MaxTokensWarningFilter())
 
 def disable_oasis_logging():
     """
-    Disable verbose log output from the OASIS library
-    OASIS logs are too verbose (logging each agent's observations and actions); we use our own action_logger
+    Disable verbose log output from the Wonderwall library
+    Wonderwall logs are too verbose (logging each agent's observations and actions); we use our own action_logger
     """
-    # Disable all OASIS loggers
+    # Disable all Wonderwall loggers
     oasis_loggers = [
         "social.agent",
         "social.twitter", 
         "social.rec",
-        "oasis.env",
+        "wonderwall.env",
         "table",
     ]
     
@@ -145,7 +149,7 @@ def init_logging_for_simulation(simulation_dir: str):
     Args:
         simulation_dir: Simulation directory path
     """
-    # Disable OASIS verbose logging
+    # Disable Wonderwall verbose logging
     disable_oasis_logging()
     
     # Clean up old log directory (if it exists)
@@ -156,21 +160,26 @@ def init_logging_for_simulation(simulation_dir: str):
 
 
 from action_logger import SimulationLogManager, PlatformActionLogger
+from cross_platform_digest import CrossPlatformLog, inject_cross_platform_context
 
 try:
     from camel.models import ModelFactory
     from camel.types import ModelPlatformType
-    import oasis
-    from oasis import (
+    import wonderwall
+    from wonderwall import (
         ActionType,
         LLMAction,
         ManualAction,
         generate_twitter_agent_graph,
-        generate_reddit_agent_graph
+        generate_reddit_agent_graph,
+        AgentGraph,
     )
+    from wonderwall.social_agent.agent import SocialAgent
+    from wonderwall.social_platform.config import UserInfo
+    from wonderwall.simulations.polymarket import polymarket_simulation
 except ImportError as e:
     print(f"Error: Missing dependency {e}")
-    print("Please install first: pip install oasis-ai camel-ai")
+    print("Please install first: pip install -e ../wonderwall camel-ai")
     sys.exit(1)
 
 
@@ -244,10 +253,11 @@ class ParallelIPCHandler:
         os.makedirs(self.responses_dir, exist_ok=True)
 
     def update_status(self, status: str):
-        """Update environment status"""
+        """Update environment status (includes PID to prevent stale overwrites)"""
         with open(self.status_file, 'w', encoding='utf-8') as f:
             json.dump({
                 "status": status,
+                "pid": os.getpid(),
                 "twitter_available": self.twitter_env is not None,
                 "reddit_available": self.reddit_env is not None,
                 "timestamp": datetime.now().isoformat()
@@ -1104,7 +1114,8 @@ async def run_twitter_simulation(
     action_logger: Optional[PlatformActionLogger] = None,
     main_logger: Optional[SimulationLogManager] = None,
     max_rounds: Optional[int] = None,
-    start_round: int = 0
+    start_round: int = 0,
+    cross_platform_log: Optional[CrossPlatformLog] = None,
 ) -> PlatformSimulation:
     """Run Twitter simulation
 
@@ -1114,6 +1125,7 @@ async def run_twitter_simulation(
         action_logger: Action logger
         main_logger: Main log manager
         max_rounds: Maximum simulation rounds (optional, used to truncate long simulations)
+        cross_platform_log: Shared log for cross-platform agent awareness
 
     Returns:
         PlatformSimulation: Result object containing env and agent_graph
@@ -1130,7 +1142,7 @@ async def run_twitter_simulation(
     # Twitter uses the general LLM configuration
     model = create_model(config, use_boost=False)
     
-    # OASIS Twitter uses CSV format
+    # Wonderwall Twitter uses CSV format
     profile_path = os.path.join(simulation_dir, "twitter_profiles.csv")
     if not os.path.exists(profile_path):
         log_info(f"Error: Profile file not found: {profile_path}")
@@ -1144,7 +1156,7 @@ async def run_twitter_simulation(
     
     # Get real Agent name mapping from config (using entity_name instead of default Agent_X)
     agent_names = get_agent_names_from_config(config)
-    # If an agent is not in the config, use OASIS default name
+    # If an agent is not in the config, use Wonderwall default name
     for agent_id, agent in result.agent_graph.get_agents():
         if agent_id not in agent_names:
             agent_names[agent_id] = getattr(agent, 'name', f'Agent_{agent_id}')
@@ -1155,9 +1167,9 @@ async def run_twitter_simulation(
     if not is_resume and os.path.exists(db_path):
         os.remove(db_path)
 
-    result.env = oasis.make(
+    result.env = wonderwall.make(
         agent_graph=result.agent_graph,
-        platform=oasis.DefaultPlatformType.TWITTER,
+        platform=wonderwall.DefaultPlatformType.TWITTER,
         database_path=db_path,
         semaphore=30,  # Limit maximum concurrent LLM requests to prevent API overload
     )
@@ -1257,14 +1269,27 @@ async def run_twitter_simulation(
                 action_logger.log_round_end(round_num + 1, 0)
             continue
         
+        # Inject cross-platform digest into active agents' system messages
+        if cross_platform_log:
+            for agent_id, agent in active_agents:
+                digest = cross_platform_log.build_digest(
+                    agent_id, exclude_platform="twitter"
+                )
+                if digest:
+                    inject_cross_platform_context(agent, digest)
+
         actions = {agent: LLMAction() for _, agent in active_agents}
         await result.env.step(actions)
-        
+
         # Fetch actually executed actions from database and log them
         actual_actions, last_rowid = fetch_new_actions_from_db(
             db_path, last_rowid, agent_names
         )
-        
+
+        # Record actions to cross-platform log for other platforms to see
+        if cross_platform_log and actual_actions:
+            cross_platform_log.record("twitter", actual_actions)
+
         round_action_count = 0
         for action_data in actual_actions:
             if action_logger:
@@ -1277,23 +1302,23 @@ async def run_twitter_simulation(
                 )
                 total_actions += 1
                 round_action_count += 1
-        
+
         if action_logger:
             action_logger.log_round_end(round_num + 1, round_action_count)
-        
+
         if (round_num + 1) % 20 == 0:
             progress = (round_num + 1) / total_rounds * 100
             log_info(f"Day {simulated_day}, {simulated_hour:02d}:00 - Round {round_num + 1}/{total_rounds} ({progress:.1f}%)")
-    
+
     # Note: Do not close the environment, keep it for Interview use
-    
+
     if action_logger:
         action_logger.log_simulation_end(total_rounds, total_actions)
-    
+
     result.total_actions = total_actions
     elapsed = (datetime.now() - start_time).total_seconds()
     log_info(f"Simulation loop completed! Elapsed: {elapsed:.1f}s, total actions: {total_actions}")
-    
+
     return result
 
 
@@ -1303,7 +1328,8 @@ async def run_reddit_simulation(
     action_logger: Optional[PlatformActionLogger] = None,
     main_logger: Optional[SimulationLogManager] = None,
     max_rounds: Optional[int] = None,
-    start_round: int = 0
+    start_round: int = 0,
+    cross_platform_log: Optional[CrossPlatformLog] = None,
 ) -> PlatformSimulation:
     """Run Reddit simulation
 
@@ -1313,6 +1339,7 @@ async def run_reddit_simulation(
         action_logger: Action logger
         main_logger: Main log manager
         max_rounds: Maximum simulation rounds (optional, used to truncate long simulations)
+        cross_platform_log: Shared log for cross-platform agent awareness
 
     Returns:
         PlatformSimulation: Result object containing env and agent_graph
@@ -1342,7 +1369,7 @@ async def run_reddit_simulation(
     
     # Get real Agent name mapping from config (using entity_name instead of default Agent_X)
     agent_names = get_agent_names_from_config(config)
-    # If an agent is not in the config, use OASIS default name
+    # If an agent is not in the config, use Wonderwall default name
     for agent_id, agent in result.agent_graph.get_agents():
         if agent_id not in agent_names:
             agent_names[agent_id] = getattr(agent, 'name', f'Agent_{agent_id}')
@@ -1353,9 +1380,9 @@ async def run_reddit_simulation(
     if not is_resume and os.path.exists(db_path):
         os.remove(db_path)
 
-    result.env = oasis.make(
+    result.env = wonderwall.make(
         agent_graph=result.agent_graph,
-        platform=oasis.DefaultPlatformType.REDDIT,
+        platform=wonderwall.DefaultPlatformType.REDDIT,
         database_path=db_path,
         semaphore=30,  # Limit maximum concurrent LLM requests to prevent API overload
     )
@@ -1463,14 +1490,27 @@ async def run_reddit_simulation(
                 action_logger.log_round_end(round_num + 1, 0)
             continue
         
+        # Inject cross-platform digest into active agents' system messages
+        if cross_platform_log:
+            for agent_id, agent in active_agents:
+                digest = cross_platform_log.build_digest(
+                    agent_id, exclude_platform="reddit"
+                )
+                if digest:
+                    inject_cross_platform_context(agent, digest)
+
         actions = {agent: LLMAction() for _, agent in active_agents}
         await result.env.step(actions)
-        
+
         # Fetch actually executed actions from database and log them
         actual_actions, last_rowid = fetch_new_actions_from_db(
             db_path, last_rowid, agent_names
         )
-        
+
+        # Record actions to cross-platform log for other platforms to see
+        if cross_platform_log and actual_actions:
+            cross_platform_log.record("reddit", actual_actions)
+
         round_action_count = 0
         for action_data in actual_actions:
             if action_logger:
@@ -1483,28 +1523,357 @@ async def run_reddit_simulation(
                 )
                 total_actions += 1
                 round_action_count += 1
-        
+
         if action_logger:
             action_logger.log_round_end(round_num + 1, round_action_count)
-        
+
         if (round_num + 1) % 20 == 0:
             progress = (round_num + 1) / total_rounds * 100
             log_info(f"Day {simulated_day}, {simulated_hour:02d}:00 - Round {round_num + 1}/{total_rounds} ({progress:.1f}%)")
-    
+
     # Note: Do not close the environment, keep it for Interview use
-    
+
     if action_logger:
         action_logger.log_simulation_end(total_rounds, total_actions)
-    
+
     result.total_actions = total_actions
     elapsed = (datetime.now() - start_time).total_seconds()
     log_info(f"Simulation loop completed! Elapsed: {elapsed:.1f}s, total actions: {total_actions}")
-    
+
+    return result
+
+
+# ============================================================
+# Polymarket prediction market simulation
+# Uses Wonderwall's SimulationConfig path (not legacy ActionType)
+# ============================================================
+
+# Polymarket action type map for action log enrichment
+POLYMARKET_ACTION_TYPE_MAP = {
+    'browse_markets': 'BROWSE_MARKETS',
+    'buy_shares': 'BUY_SHARES',
+    'sell_shares': 'SELL_SHARES',
+    'view_portfolio': 'VIEW_PORTFOLIO',
+    'create_market': 'CREATE_MARKET',
+    'comment_on_market': 'COMMENT_ON_MARKET',
+    'do_nothing': 'DO_NOTHING',
+    'sign_up': 'SIGN_UP',
+}
+
+
+def _load_polymarket_profiles(profile_path: str) -> List[Dict[str, Any]]:
+    """Load Polymarket agent profiles from JSON."""
+    with open(profile_path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+def _build_polymarket_agent_graph(
+    profiles: List[Dict[str, Any]],
+    model,
+) -> AgentGraph:
+    """
+    Build an AgentGraph for Polymarket from profile dicts.
+
+    Each profile has: user_id, name, description, risk_tolerance, user_profile.
+    Agents are created with simulation=polymarket_simulation so they use
+    PolymarketAction / PolymarketEnvironment / PolymarketPromptBuilder.
+    """
+    agent_graph = AgentGraph()
+
+    for profile in profiles:
+        agent_id = profile["user_id"]
+        user_info = UserInfo(
+            name=profile["name"],
+            description=profile.get("description", ""),
+            profile={
+                "other_info": {
+                    "user_profile": profile.get("user_profile", ""),
+                    "risk_tolerance": profile.get("risk_tolerance", "moderate"),
+                }
+            },
+        )
+        agent = SocialAgent(
+            agent_id=agent_id,
+            user_info=user_info,
+            model=model,
+            agent_graph=agent_graph,
+            simulation=polymarket_simulation,
+        )
+        agent_graph.add_agent(agent)
+
+    return agent_graph
+
+
+def _fetch_polymarket_actions_from_db(
+    db_path: str,
+    last_rowid: int,
+    agent_names: Dict[int, str],
+) -> Tuple[List[Dict[str, Any]], int]:
+    """
+    Fetch new Polymarket actions from the trace table.
+
+    Same pattern as fetch_new_actions_from_db but adapted for
+    Polymarket's action names and richer trade data.
+    """
+    actions = []
+    new_last_rowid = last_rowid
+
+    if not os.path.exists(db_path):
+        return actions, new_last_rowid
+
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT rowid, user_id, action, info
+            FROM trace
+            WHERE rowid > ?
+            ORDER BY rowid ASC
+        """, (last_rowid,))
+
+        for rowid, user_id, action, info_json in cursor.fetchall():
+            new_last_rowid = rowid
+
+            if action in ('sign_up',):
+                continue
+
+            try:
+                action_args = json.loads(info_json) if info_json else {}
+            except json.JSONDecodeError:
+                action_args = {}
+
+            action_type = POLYMARKET_ACTION_TYPE_MAP.get(action, action.upper())
+
+            actions.append({
+                'agent_id': user_id,
+                'agent_name': agent_names.get(user_id, f'Agent_{user_id}'),
+                'action_type': action_type,
+                'action_args': action_args,
+            })
+
+        conn.close()
+    except Exception as e:
+        print(f"Failed to read Polymarket actions from database: {e}")
+
+    return actions, new_last_rowid
+
+
+async def run_polymarket_simulation(
+    config: Dict[str, Any],
+    simulation_dir: str,
+    action_logger: Optional[PlatformActionLogger] = None,
+    main_logger: Optional[SimulationLogManager] = None,
+    max_rounds: Optional[int] = None,
+    start_round: int = 0,
+    cross_platform_log: Optional[CrossPlatformLog] = None,
+) -> PlatformSimulation:
+    """Run Polymarket prediction market simulation.
+
+    Uses Wonderwall's SimulationConfig-based path. Agents are LLM-driven
+    traders that browse markets, buy/sell shares, and create new markets.
+
+    Args:
+        config: Simulation configuration
+        simulation_dir: Simulation directory
+        action_logger: Action logger (writes to polymarket/actions.jsonl)
+        main_logger: Main log manager
+        max_rounds: Maximum simulation rounds
+        start_round: Resume from this round
+        cross_platform_log: Shared log for cross-platform agent awareness
+
+    Returns:
+        PlatformSimulation with env and agent_graph
+    """
+    result = PlatformSimulation()
+
+    def log_info(msg):
+        if main_logger:
+            main_logger.info(f"[Polymarket] {msg}")
+        print(f"[Polymarket] {msg}")
+
+    log_info("Initializing...")
+
+    model = create_model(config, use_boost=False)
+
+    profile_path = os.path.join(simulation_dir, "polymarket_profiles.json")
+    if not os.path.exists(profile_path):
+        log_info(f"Error: Profile file not found: {profile_path}")
+        return result
+
+    profiles = _load_polymarket_profiles(profile_path)
+    result.agent_graph = _build_polymarket_agent_graph(profiles, model)
+
+    # Agent name mapping
+    agent_names = get_agent_names_from_config(config)
+    for agent_id, agent in result.agent_graph.get_agents():
+        if agent_id not in agent_names:
+            agent_names[agent_id] = getattr(
+                agent, 'name', f'Agent_{agent_id}'
+            )
+
+    is_resume = start_round > 0
+
+    db_path = os.path.join(simulation_dir, "polymarket_simulation.db")
+    if not is_resume and os.path.exists(db_path):
+        os.remove(db_path)
+
+    result.env = wonderwall.make(
+        agent_graph=result.agent_graph,
+        simulation=polymarket_simulation,
+        database_path=db_path,
+        semaphore=30,
+    )
+
+    await result.env.reset()
+    log_info(
+        "Environment started"
+        + (f" (resuming from round {start_round})" if is_resume else "")
+    )
+
+    if action_logger:
+        action_logger.log_simulation_start(config)
+
+    # Seed initial markets if configured (round 0)
+    if not is_resume:
+        event_config = config.get("event_config", {})
+        initial_markets = event_config.get("initial_markets", [])
+
+        if action_logger:
+            action_logger.log_round_start(0, 0)
+
+        initial_action_count = 0
+        if initial_markets:
+            # Use agent 0 to create seed markets
+            agent_0 = result.env.agent_graph.get_agent(0)
+            seed_actions = []
+            for market in initial_markets:
+                seed_actions.append(ManualAction(
+                    action_type="create_market",
+                    action_args={
+                        "question": market.get("question", ""),
+                        "outcome_a": market.get("outcome_a", "YES"),
+                        "outcome_b": market.get("outcome_b", "NO"),
+                    },
+                ))
+                initial_action_count += 1
+
+            await result.env.step({agent_0: seed_actions})
+            log_info(f"Seeded {len(seed_actions)} initial markets")
+
+            # Log seed actions
+            if action_logger:
+                for market in initial_markets:
+                    action_logger.log_action(
+                        round_num=0,
+                        agent_id=0,
+                        agent_name=agent_names.get(0, "Agent_0"),
+                        action_type="CREATE_MARKET",
+                        action_args={"question": market.get("question", "")},
+                    )
+
+        if action_logger:
+            action_logger.log_round_end(0, initial_action_count)
+
+    # Main simulation loop
+    time_config = config.get("time_config", {})
+    total_hours = time_config.get("total_simulation_hours", 72)
+    minutes_per_round = time_config.get("minutes_per_round", 30)
+    total_rounds = (total_hours * 60) // minutes_per_round
+
+    if max_rounds is not None and max_rounds > 0:
+        original_rounds = total_rounds
+        total_rounds = min(total_rounds, max_rounds)
+        if total_rounds < original_rounds:
+            log_info(f"Rounds truncated: {original_rounds} -> {total_rounds}")
+
+    start_time = datetime.now()
+    total_actions = 0
+    last_rowid = 0
+
+    if start_round > 0:
+        log_info(f"Resuming from round {start_round}")
+
+    for round_num in range(start_round, total_rounds):
+        if _shutdown_event and _shutdown_event.is_set():
+            if main_logger:
+                main_logger.info(
+                    f"Shutdown signal, stopping at round {round_num + 1}"
+                )
+            break
+
+        simulated_minutes = round_num * minutes_per_round
+        simulated_hour = (simulated_minutes // 60) % 24
+        simulated_day = simulated_minutes // (60 * 24) + 1
+
+        active_agents = get_active_agents_for_round(
+            result.env, config, simulated_hour, round_num
+        )
+
+        if action_logger:
+            action_logger.log_round_start(round_num + 1, simulated_hour)
+
+        if not active_agents:
+            if action_logger:
+                action_logger.log_round_end(round_num + 1, 0)
+            continue
+
+        # Inject cross-platform digest
+        if cross_platform_log:
+            for agent_id, agent in active_agents:
+                digest = cross_platform_log.build_digest(
+                    agent_id, exclude_platform="polymarket"
+                )
+                if digest:
+                    inject_cross_platform_context(agent, digest)
+
+        actions = {agent: LLMAction() for _, agent in active_agents}
+        await result.env.step(actions)
+
+        # Fetch actions from trace table
+        actual_actions, last_rowid = _fetch_polymarket_actions_from_db(
+            db_path, last_rowid, agent_names
+        )
+
+        # Record to cross-platform log
+        if cross_platform_log and actual_actions:
+            cross_platform_log.record("polymarket", actual_actions)
+
+        round_action_count = 0
+        for action_data in actual_actions:
+            if action_logger:
+                action_logger.log_action(
+                    round_num=round_num + 1,
+                    agent_id=action_data['agent_id'],
+                    agent_name=action_data['agent_name'],
+                    action_type=action_data['action_type'],
+                    action_args=action_data['action_args'],
+                )
+                total_actions += 1
+                round_action_count += 1
+
+        if action_logger:
+            action_logger.log_round_end(round_num + 1, round_action_count)
+
+        if (round_num + 1) % 20 == 0:
+            progress = (round_num + 1) / total_rounds * 100
+            log_info(
+                f"Day {simulated_day}, {simulated_hour:02d}:00 - "
+                f"Round {round_num + 1}/{total_rounds} ({progress:.1f}%)"
+            )
+
+    if action_logger:
+        action_logger.log_simulation_end(total_rounds, total_actions)
+
+    result.total_actions = total_actions
+    elapsed = (datetime.now() - start_time).total_seconds()
+    log_info(f"Simulation loop completed! Elapsed: {elapsed:.1f}s, total actions: {total_actions}")
+
     return result
 
 
 async def main():
-    parser = argparse.ArgumentParser(description='OASIS dual-platform parallel simulation')
+    parser = argparse.ArgumentParser(description='Wonderwall dual-platform parallel simulation')
     parser.add_argument(
         '--config', 
         type=str, 
@@ -1520,6 +1889,11 @@ async def main():
         '--reddit-only',
         action='store_true',
         help='Run Reddit simulation only'
+    )
+    parser.add_argument(
+        '--polymarket-only',
+        action='store_true',
+        help='Run Polymarket prediction market simulation only'
     )
     parser.add_argument(
         '--max-rounds',
@@ -1545,7 +1919,13 @@ async def main():
         default=False,
         help='Close environment immediately after simulation, do not enter command waiting mode'
     )
-    
+    parser.add_argument(
+        '--cross-platform',
+        action='store_true',
+        default=False,
+        help='Enable cross-platform awareness: agents see a digest of their own activity on other platforms'
+    )
+
     args = parser.parse_args()
     
     # Create shutdown event at the start of main to ensure the entire program can respond to shutdown signals
@@ -1560,16 +1940,17 @@ async def main():
     simulation_dir = os.path.dirname(args.config) or "."
     wait_for_commands = not args.no_wait
 
-    # Initialize logging configuration (disable OASIS logs, clean up old files)
+    # Initialize logging configuration (disable Wonderwall logs, clean up old files)
     init_logging_for_simulation(simulation_dir)
     
     # Create log manager
     log_manager = SimulationLogManager(simulation_dir)
     twitter_logger = log_manager.get_twitter_logger()
     reddit_logger = log_manager.get_reddit_logger()
-    
+    polymarket_logger = log_manager.get_polymarket_logger()
+
     log_manager.info("=" * 60)
-    log_manager.info("OASIS Dual-Platform Parallel Simulation")
+    log_manager.info("Wonderwall Multi-Platform Parallel Simulation")
     log_manager.info(f"Config file: {args.config}")
     log_manager.info(f"Simulation ID: {config.get('simulation_id', 'unknown')}")
     log_manager.info(f"Command waiting mode: {'enabled' if wait_for_commands else 'disabled'}")
@@ -1594,13 +1975,15 @@ async def main():
     log_manager.info(f"  - Main log: simulation.log")
     log_manager.info(f"  - Twitter actions: twitter/actions.jsonl")
     log_manager.info(f"  - Reddit actions: reddit/actions.jsonl")
+    log_manager.info(f"  - Polymarket actions: polymarket/actions.jsonl")
     log_manager.info("=" * 60)
-    
+
     start_time = datetime.now()
 
-    # Store simulation results for both platforms
+    # Store simulation results for all platforms
     twitter_result: Optional[PlatformSimulation] = None
     reddit_result: Optional[PlatformSimulation] = None
+    polymarket_result: Optional[PlatformSimulation] = None
 
     if args.env_only:
         # --env-only: skip simulation, just create environments for interviews
@@ -1615,9 +1998,9 @@ async def main():
                 profile_path=twitter_profile_path, model=model, available_actions=TWITTER_ACTIONS,
             )
             db_path = os.path.join(simulation_dir, "twitter_simulation.db")
-            twitter_result.env = oasis.make(
+            twitter_result.env = wonderwall.make(
                 agent_graph=twitter_result.agent_graph,
-                platform=oasis.DefaultPlatformType.TWITTER,
+                platform=wonderwall.DefaultPlatformType.TWITTER,
                 database_path=db_path, semaphore=30,
             )
             await twitter_result.env.reset()
@@ -1631,9 +2014,9 @@ async def main():
                 profile_path=reddit_profile_path, model=model, available_actions=REDDIT_ACTIONS,
             )
             db_path = os.path.join(simulation_dir, "reddit_simulation.db")
-            reddit_result.env = oasis.make(
+            reddit_result.env = wonderwall.make(
                 agent_graph=reddit_result.agent_graph,
-                platform=oasis.DefaultPlatformType.REDDIT,
+                platform=wonderwall.DefaultPlatformType.REDDIT,
                 database_path=db_path, semaphore=30,
             )
             await reddit_result.env.reset()
@@ -1642,17 +2025,47 @@ async def main():
         log_manager.info("Environments ready for interviews")
         wait_for_commands = True  # force waiting mode
     else:
+        # Create cross-platform log if enabled (shared between all platform coroutines)
+        xp_log = CrossPlatformLog() if args.cross_platform else None
+        if xp_log:
+            log_manager.info("Cross-platform awareness ENABLED: agents will see their activity on other platforms")
+
+        # Check which platforms have profile files
+        has_twitter = os.path.exists(os.path.join(simulation_dir, "twitter_profiles.csv"))
+        has_reddit = os.path.exists(os.path.join(simulation_dir, "reddit_profiles.json"))
+        has_polymarket = os.path.exists(os.path.join(simulation_dir, "polymarket_profiles.json"))
+
         if args.twitter_only:
-            twitter_result = await run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds, args.start_round)
+            twitter_result = await run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds, args.start_round, cross_platform_log=xp_log)
         elif args.reddit_only:
-            reddit_result = await run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds, args.start_round)
+            reddit_result = await run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds, args.start_round, cross_platform_log=xp_log)
+        elif args.polymarket_only:
+            polymarket_result = await run_polymarket_simulation(config, simulation_dir, polymarket_logger, log_manager, args.max_rounds, args.start_round, cross_platform_log=xp_log)
         else:
-            # Run in parallel (each platform uses its own logger)
-            results = await asyncio.gather(
-                run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds, args.start_round),
-                run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds, args.start_round),
-            )
-            twitter_result, reddit_result = results
+            # Run all available platforms in parallel
+            coros = []
+            platform_names = []
+
+            if has_twitter:
+                coros.append(run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds, args.start_round, cross_platform_log=xp_log))
+                platform_names.append("twitter")
+            if has_reddit:
+                coros.append(run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds, args.start_round, cross_platform_log=xp_log))
+                platform_names.append("reddit")
+            if has_polymarket:
+                coros.append(run_polymarket_simulation(config, simulation_dir, polymarket_logger, log_manager, args.max_rounds, args.start_round, cross_platform_log=xp_log))
+                platform_names.append("polymarket")
+
+            log_manager.info(f"Launching platforms: {', '.join(platform_names)}")
+            results = await asyncio.gather(*coros)
+
+            for name, res in zip(platform_names, results):
+                if name == "twitter":
+                    twitter_result = res
+                elif name == "reddit":
+                    reddit_result = res
+                elif name == "polymarket":
+                    polymarket_result = res
 
     total_elapsed = (datetime.now() - start_time).total_seconds()
     log_manager.info("=" * 60)

@@ -1151,8 +1151,14 @@ Return the sub-questions as a JSON list."""
         )
         optimized_prompt = f"{INTERVIEW_PROMPT_PREFIX}{combined_prompt}"
 
-        # Step 4: Call the real interview API
+        # Step 4: Call the real interview API (only if env is alive)
         try:
+            # Check run state first — skip IPC entirely if simulation is completed/stopped
+            run_state = SimulationRunner.get_run_state(simulation_id)
+            if run_state and run_state.runner_status.value in ("completed", "stopped", "failed"):
+                logger.info(f"Simulation {simulation_id} is {run_state.runner_status.value}, using LLM-based interview directly")
+                raise ValueError("Simulation completed, skipping IPC")
+
             interviews_request = []
             for agent_idx in selected_indices:
                 interviews_request.append({
@@ -1173,7 +1179,7 @@ Return the sub-questions as a JSON list."""
 
             if not api_result.get("success", False):
                 error_msg = api_result.get("error", "Unknown error")
-                logger.warning(f"Interview API call failed: {error_msg}, falling back to LLM-based interview")
+                logger.info(f"Interview API returned error: {error_msg}, using LLM-based interview")
                 return self._fallback_interview(
                     result=result,
                     selected_agents=selected_agents,
@@ -1242,7 +1248,7 @@ Return the sub-questions as a JSON list."""
             result.interviewed_count = len(result.interviews)
 
         except (ValueError, Exception) as e:
-            logger.warning(f"Interview API call failed ({type(e).__name__}): {e}, falling back to LLM-based interview")
+            logger.info(f"Simulation process not running, using LLM-based interview (reason: {e})")
             return self._fallback_interview(
                 result=result,
                 selected_agents=selected_agents,

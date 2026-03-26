@@ -258,7 +258,8 @@ const handleEnterEnvSetup = async () => {
       project_id: props.projectData.project_id,
       graph_id: props.projectData.graph_id,
       enable_twitter: true,
-      enable_reddit: true
+      enable_reddit: true,
+      enable_polymarket: true
     })
 
     if (res.success && res.data?.simulation_id) {

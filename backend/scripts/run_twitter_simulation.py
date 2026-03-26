@@ -100,7 +100,7 @@ def setup_oasis_logging(log_dir: str):
         "social.agent": os.path.join(log_dir, "social.agent.log"),
         "social.twitter": os.path.join(log_dir, "social.twitter.log"),
         "social.rec": os.path.join(log_dir, "social.rec.log"),
-        "oasis.env": os.path.join(log_dir, "oasis.env.log"),
+        "wonderwall.env": os.path.join(log_dir, "wonderwall.env.log"),
         "table": os.path.join(log_dir, "table.log"),
     }
     
@@ -118,8 +118,8 @@ def setup_oasis_logging(log_dir: str):
 try:
     from camel.models import ModelFactory
     from camel.types import ModelPlatformType
-    import oasis
-    from oasis import (
+    import wonderwall
+    from wonderwall import (
         ActionType,
         LLMAction,
         ManualAction,
@@ -589,9 +589,9 @@ class TwitterSimulationRunner:
         
         # Create environment
         print("Creating OASIS environment...")
-        self.env = oasis.make(
+        self.env = wonderwall.make(
             agent_graph=self.agent_graph,
-            platform=oasis.DefaultPlatformType.TWITTER,
+            platform=wonderwall.DefaultPlatformType.TWITTER,
             database_path=db_path,
             semaphore=30,  # Limit maximum concurrent LLM requests to prevent API overload
         )

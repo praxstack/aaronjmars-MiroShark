@@ -199,7 +199,8 @@ def create_simulation():
             "project_id": "proj_xxxx",      // Required
             "graph_id": "miroshark_xxxx",    // Optional, fetched from project if not provided
             "enable_twitter": true,          // Optional, default true
-            "enable_reddit": true            // Optional, default true
+            "enable_reddit": true,           // Optional, default true
+            "enable_polymarket": false       // Optional, default false
         }
 
     Returns:
@@ -246,6 +247,7 @@ def create_simulation():
             graph_id=graph_id,
             enable_twitter=data.get('enable_twitter', True),
             enable_reddit=data.get('enable_reddit', True),
+            enable_polymarket=data.get('enable_polymarket', False),
         )
         
         return jsonify({
@@ -281,7 +283,7 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
     import os
     from ..config import Config
     
-    simulation_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
+    simulation_dir = os.path.join(Config.WONDERWALL_SIMULATION_DATA_DIR, simulation_id)
     
     # Check if directory exists
     if not os.path.exists(simulation_dir):
@@ -1088,7 +1090,7 @@ def get_simulation_profiles_realtime(simulation_id: str):
         platform = request.args.get('platform', 'reddit')
         
         # Get simulation directory
-        sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
+        sim_dir = os.path.join(Config.WONDERWALL_SIMULATION_DATA_DIR, simulation_id)
 
         if not os.path.exists(sim_dir):
             return jsonify({
@@ -1191,7 +1193,7 @@ def get_simulation_config_realtime(simulation_id: str):
     
     try:
         # Get simulation directory
-        sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
+        sim_dir = os.path.join(Config.WONDERWALL_SIMULATION_DATA_DIR, simulation_id)
 
         if not os.path.exists(sim_dir):
             return jsonify({
@@ -1558,11 +1560,13 @@ def start_simulation():
                     "error": "max_rounds must be a valid integer"
                 }), 400
 
-        if platform not in ['twitter', 'reddit', 'parallel']:
+        if platform not in ['twitter', 'reddit', 'polymarket', 'parallel']:
             return jsonify({
                 "success": False,
-                "error": f"Invalid platform type: {platform}, options: twitter/reddit/parallel"
+                "error": f"Invalid platform type: {platform}, options: twitter/reddit/polymarket/parallel"
             }), 400
+
+        enable_cross_platform = data.get('enable_cross_platform', False)
 
         # Check if simulation is ready
         manager = SimulationManager()
@@ -1652,7 +1656,8 @@ def start_simulation():
             enable_graph_memory_update=enable_graph_memory_update,
             graph_id=graph_id,
             storage=sim_storage,
-            start_round=start_round
+            start_round=start_round,
+            enable_cross_platform=enable_cross_platform,
         )
         
         # Update simulation status

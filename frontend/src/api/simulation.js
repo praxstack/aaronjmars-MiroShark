@@ -2,7 +2,7 @@ import service, { requestWithRetry } from './index'
 
 /**
  * Create simulation
- * @param {Object} data - { project_id, graph_id?, enable_twitter?, enable_reddit? }
+ * @param {Object} data - { project_id, graph_id?, enable_twitter?, enable_reddit?, enable_polymarket? }
  */
 export const createSimulation = (data) => {
   return requestWithRetry(() => service.post('/api/simulation/create', data), 3, 1000)
@@ -78,7 +78,7 @@ export const listSimulations = (projectId) => {
 
 /**
  * Start simulation
- * @param {Object} data - { simulation_id, platform?, max_rounds?, enable_graph_memory_update? }
+ * @param {Object} data - { simulation_id, platform?, max_rounds?, enable_graph_memory_update?, enable_cross_platform? }
  */
 export const startSimulation = (data) => {
   return requestWithRetry(() => service.post('/api/simulation/start', data), 3, 1000)

@@ -64,18 +64,22 @@ class Config:
     DEFAULT_CHUNK_SIZE = 500  # Default chunk size
     DEFAULT_CHUNK_OVERLAP = 50  # Default overlap size
     
-    # OASIS simulation configuration
-    OASIS_DEFAULT_MAX_ROUNDS = int(os.environ.get('OASIS_DEFAULT_MAX_ROUNDS', '10'))
-    OASIS_SIMULATION_DATA_DIR = os.path.join(os.path.dirname(__file__), '../uploads/simulations')
-    
-    # OASIS platform available actions configuration
-    OASIS_TWITTER_ACTIONS = [
+    # Wonderwall simulation configuration
+    WONDERWALL_DEFAULT_MAX_ROUNDS = int(os.environ.get('WONDERWALL_DEFAULT_MAX_ROUNDS', '10'))
+    WONDERWALL_SIMULATION_DATA_DIR = os.path.join(os.path.dirname(__file__), '../uploads/simulations')
+
+    # Wonderwall platform available actions configuration
+    WONDERWALL_TWITTER_ACTIONS = [
         'CREATE_POST', 'LIKE_POST', 'REPOST', 'FOLLOW', 'DO_NOTHING', 'QUOTE_POST'
     ]
-    OASIS_REDDIT_ACTIONS = [
+    WONDERWALL_REDDIT_ACTIONS = [
         'LIKE_POST', 'DISLIKE_POST', 'CREATE_POST', 'CREATE_COMMENT',
         'LIKE_COMMENT', 'DISLIKE_COMMENT', 'SEARCH_POSTS', 'SEARCH_USER',
         'TREND', 'REFRESH', 'DO_NOTHING', 'FOLLOW', 'MUTE'
+    ]
+    WONDERWALL_POLYMARKET_ACTIONS = [
+        'browse_markets', 'buy_shares', 'sell_shares',
+        'view_portfolio', 'create_market', 'comment_on_market', 'do_nothing'
     ]
     
     # Report Agent configuration
