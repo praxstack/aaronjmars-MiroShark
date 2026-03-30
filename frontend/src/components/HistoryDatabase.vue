@@ -178,6 +178,15 @@
                 <span class="btn-text">Simulation Run</span>
               </button>
               <button
+                class="modal-btn btn-replay"
+                @click="goToReplay"
+                :disabled="!(selectedProject.current_round > 0)"
+              >
+                <span class="btn-step">▶</span>
+                <span class="btn-icon">◈</span>
+                <span class="btn-text">Replay</span>
+              </button>
+              <button
                 class="modal-btn btn-report"
                 @click="goToReport"
                 :disabled="!selectedProject.report_id"
@@ -445,6 +454,17 @@ const goToSimulationRun = () => {
   if (selectedProject.value?.simulation_id) {
     router.push({
       name: 'SimulationRun',
+      params: { simulationId: selectedProject.value.simulation_id }
+    })
+    closeModal()
+  }
+}
+
+// Navigate to replay page
+const goToReplay = () => {
+  if (selectedProject.value?.simulation_id) {
+    router.push({
+      name: 'Replay',
       params: { simulationId: selectedProject.value.simulation_id }
     })
     closeModal()
@@ -1376,6 +1396,7 @@ onUnmounted(() => {
 .modal-btn.btn-project .btn-icon { color: #FF6B1A; }
 .modal-btn.btn-simulation .btn-icon { color: #FFB347; }
 .modal-btn.btn-simrun .btn-icon { color: #FF6B1A; }
+.modal-btn.btn-replay .btn-icon { color: #FF6B1A; }
 .modal-btn.btn-report .btn-icon { color: #43C165; }
 .modal-btn.btn-interaction .btn-icon { color: #FF6B1A; }
 

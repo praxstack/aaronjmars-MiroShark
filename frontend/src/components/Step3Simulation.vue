@@ -30,6 +30,15 @@
         {{ runStatus.runner_status === 'failed' ? 'Restart (failed)' : 'Restart' }}
       </button>
 
+      <!-- Replay (when simulation has data) -->
+      <button
+        v-if="phase === 2 && allActions.length > 0"
+        class="action-btn secondary"
+        @click="openReplay"
+      >
+        ▶ Replay
+      </button>
+
       <!-- Resume (when paused/stopped/failed with partial data) -->
       <button
         v-if="phase === 2 && hasPartialData"
@@ -647,6 +656,11 @@ const handleResume = async () => {
   } finally {
     isStarting.value = false
   }
+}
+
+// Open replay view
+const openReplay = () => {
+  router.push({ name: 'Replay', params: { simulationId: props.simulationId } })
 }
 
 // Restart simulation (force restart from scratch)
