@@ -129,6 +129,15 @@ export const getRunStatusDetail = (simulationId) => {
 }
 
 /**
+ * Compare two simulations side by side
+ * @param {string} id1 - First simulation ID
+ * @param {string} id2 - Second simulation ID
+ */
+export const compareSimulations = (id1, id2) => {
+  return service.get('/api/simulation/compare', { params: { id1, id2 } })
+}
+
+/**
  * Get posts in simulation
  * @param {string} simulationId
  * @param {string} platform - 'reddit' | 'twitter'

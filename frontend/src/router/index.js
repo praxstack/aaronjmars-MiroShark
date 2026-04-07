@@ -6,6 +6,7 @@ import SimulationRunView from '../views/SimulationRunView.vue'
 import ReportView from '../views/ReportView.vue'
 import InteractionView from '../views/InteractionView.vue'
 import ReplayView from '../views/ReplayView.vue'
+import ComparisonView from '../views/ComparisonView.vue'
 
 const routes = [
   {
@@ -47,6 +48,12 @@ const routes = [
     path: '/replay/:simulationId',
     name: 'Replay',
     component: ReplayView,
+    props: true
+  },
+  {
+    path: '/compare/:id1?/:id2?',
+    name: 'Compare',
+    component: ComparisonView,
     props: true
   }
 ]

@@ -3063,3 +3063,238 @@ def export_simulation_data(simulation_id: str):
             "error": str(e),
             "traceback": traceback.format_exc()
         }), 500
+
+
+# ============== Simulation Comparison Endpoint ==============
+
+@simulation_bp.route('/compare', methods=['GET'])
+def compare_simulations():
+    """
+    Compare two completed simulations side by side.
+
+    Query parameters:
+        id1: First simulation ID (required)
+        id2: Second simulation ID (required)
+
+    Returns aggregated comparison data from both simulations:
+    - Influence leaderboards (top 10 each)
+    - Per-round activity timelines
+    - Prediction market final prices (from polymarket SQLite if available)
+    - Divergence score (0–1, higher = more divergent outcomes)
+
+    Divergence score methodology:
+        For each agent that appears in the top-10 of both runs, compute the
+        normalized absolute rank difference. Agents present in one run but not
+        the other contribute a penalty of 0.5 per missing agent. The final score
+        is the mean across all compared agents, clamped to [0, 1].
+    """
+    try:
+        id1 = request.args.get('id1', '').strip()
+        id2 = request.args.get('id2', '').strip()
+
+        if not id1 or not id2:
+            return jsonify({"success": False, "error": "Both id1 and id2 are required"}), 400
+
+        if id1 == id2:
+            return jsonify({"success": False, "error": "id1 and id2 must be different simulations"}), 400
+
+        def _load_state(sim_id):
+            m = SimulationManager()
+            return m.get_simulation(sim_id)
+
+        def _load_influence(sim_id):
+            """Inline influence computation (reuses logic from get_influence_leaderboard)."""
+            sim_dir = os.path.join(Config.WONDERWALL_SIMULATION_DATA_DIR, sim_id)
+            if not os.path.exists(sim_dir):
+                return []
+
+            ENGAGEMENT_TYPES = frozenset({
+                'LIKE_POST', 'REPOST', 'QUOTE_POST', 'LIKE_COMMENT', 'CREATE_COMMENT',
+            })
+            agents = {}
+
+            def _get_or_create(name):
+                if name not in agents:
+                    agents[name] = {
+                        'agent_name': name,
+                        'posts_created': 0,
+                        'engagement_received': 0,
+                        'follows_received': 0,
+                        'platforms': set(),
+                    }
+                return agents[name]
+
+            for platform in ('twitter', 'reddit', 'polymarket'):
+                path = os.path.join(sim_dir, platform, 'actions.jsonl')
+                if not os.path.exists(path):
+                    continue
+                with open(path, 'r', encoding='utf-8') as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            ev = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if ev.get('event_type') in ('simulation_start', 'round_start', 'round_end', 'simulation_end'):
+                            continue
+                        name = ev.get('agent_name')
+                        if not name:
+                            continue
+                        actor = _get_or_create(name)
+                        actor['platforms'].add(platform)
+                        atype = ev.get('action_type', '')
+                        args = ev.get('action_args') or {}
+                        if atype == 'CREATE_POST':
+                            actor['posts_created'] += 1
+                        elif atype in ENGAGEMENT_TYPES:
+                            author = args.get('post_author_name') or args.get('original_author_name')
+                            if author and author != name:
+                                _get_or_create(author)['engagement_received'] += 1
+                        elif atype == 'FOLLOW':
+                            target = args.get('target_user_name')
+                            if target:
+                                _get_or_create(target)['follows_received'] += 1
+
+            ranked = []
+            for a in agents.values():
+                pc = len(a['platforms'])
+                score = a['engagement_received'] * 3 + a['follows_received'] * 2 + pc * 5 + a['posts_created']
+                ranked.append({
+                    'agent_name': a['agent_name'],
+                    'posts_created': a['posts_created'],
+                    'engagement_received': a['engagement_received'],
+                    'follows_received': a['follows_received'],
+                    'platform_count': pc,
+                    'influence_score': score,
+                })
+            ranked.sort(key=lambda x: x['influence_score'], reverse=True)
+            for i, e in enumerate(ranked):
+                e['rank'] = i + 1
+            return ranked[:10]
+
+        def _load_timeline_summary(sim_id):
+            """Load and summarise timeline: per-round total actions, total rounds."""
+            timeline = SimulationRunner.get_timeline(sim_id)
+            return [
+                {
+                    'round_num': r['round_num'],
+                    'total_actions': r['total_actions'],
+                    'twitter_actions': r['twitter_actions'],
+                    'reddit_actions': r['reddit_actions'],
+                }
+                for r in timeline
+            ]
+
+        def _load_market_prices(sim_id):
+            """
+            Extract per-round YES token prices from the Polymarket SQLite database.
+
+            Reads the AmM reserve table to derive price_yes = reserve_no / (reserve_yes + reserve_no)
+            per round. Returns an empty list if Polymarket was not enabled or the DB does not exist.
+            """
+            sim_dir = os.path.join(Config.WONDERWALL_SIMULATION_DATA_DIR, sim_id)
+            db_path = os.path.join(sim_dir, 'polymarket', 'polymarket.db')
+            if not os.path.exists(db_path):
+                return []
+            try:
+                import sqlite3
+                con = sqlite3.connect(db_path)
+                cur = con.cursor()
+                # Try to read round-level price snapshots if they exist
+                tables = {r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                prices = []
+
+                if 'price_history' in tables:
+                    # Custom table we may have written
+                    rows = cur.execute(
+                        "SELECT round_num, market_id, price_yes FROM price_history ORDER BY round_num, market_id"
+                    ).fetchall()
+                    for rn, mid, py in rows:
+                        prices.append({'round_num': rn, 'market_id': mid, 'price_yes': py})
+                elif 'market' in tables:
+                    # Wonderwall market table: id, reserve_yes, reserve_no
+                    rows = cur.execute(
+                        "SELECT id, reserve_yes, reserve_no FROM market"
+                    ).fetchall()
+                    for mid, ry, rn in rows:
+                        total = (ry or 0) + (rn or 0)
+                        price_yes = (rn / total) if total > 0 else 0.5
+                        prices.append({'market_id': mid, 'price_yes': round(price_yes, 4), 'round_num': None})
+                con.close()
+                return prices
+            except Exception:
+                return []
+
+        # Load data for both simulations
+        state1 = _load_state(id1)
+        state2 = _load_state(id2)
+
+        if not state1:
+            return jsonify({"success": False, "error": f"Simulation not found: {id1}"}), 404
+        if not state2:
+            return jsonify({"success": False, "error": f"Simulation not found: {id2}"}), 404
+
+        influence1 = _load_influence(id1)
+        influence2 = _load_influence(id2)
+        timeline1 = _load_timeline_summary(id1)
+        timeline2 = _load_timeline_summary(id2)
+        markets1 = _load_market_prices(id1)
+        markets2 = _load_market_prices(id2)
+
+        # ---- Divergence Score ----
+        # Rank-based divergence: normalized mean absolute rank difference for top-10 agents
+        rank_map1 = {a['agent_name']: a['rank'] for a in influence1}
+        rank_map2 = {a['agent_name']: a['rank'] for a in influence2}
+        all_agents = set(rank_map1) | set(rank_map2)
+        if all_agents:
+            diffs = []
+            for name in all_agents:
+                r1 = rank_map1.get(name, 15)  # penalty: treat absent agents as rank 15
+                r2 = rank_map2.get(name, 15)
+                diffs.append(abs(r1 - r2) / 14.0)  # normalise to [0, 1] (max diff = 14)
+            divergence_score = round(min(1.0, sum(diffs) / len(diffs)), 3)
+        else:
+            divergence_score = 0.0
+
+        # ---- Total activity stats ----
+        def _total_actions(timeline):
+            return sum(r['total_actions'] for r in timeline)
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "id1": id1,
+                "id2": id2,
+                "divergence_score": divergence_score,
+                "sim1": {
+                    "simulation_id": id1,
+                    "status": state1.status.value if state1 else None,
+                    "profiles_count": state1.profiles_count if state1 else 0,
+                    "total_rounds": len(timeline1),
+                    "total_actions": _total_actions(timeline1),
+                    "influence": influence1,
+                    "timeline": timeline1,
+                    "markets": markets1,
+                },
+                "sim2": {
+                    "simulation_id": id2,
+                    "status": state2.status.value if state2 else None,
+                    "profiles_count": state2.profiles_count if state2 else 0,
+                    "total_rounds": len(timeline2),
+                    "total_actions": _total_actions(timeline2),
+                    "influence": influence2,
+                    "timeline": timeline2,
+                    "markets": markets2,
+                },
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to compare simulations: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500

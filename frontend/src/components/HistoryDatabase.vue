@@ -15,6 +15,12 @@
       <div class="section-line"></div>
       <span class="section-title">Simulation Records</span>
       <div class="section-line"></div>
+      <button
+        v-if="projects.length >= 2"
+        class="compare-mode-btn"
+        :class="{ active: compareMode }"
+        @click="toggleCompareMode"
+      >{{ compareMode ? (compareSelections.length === 2 ? 'Compare →' : `${compareSelections.length}/2 selected`) : '⇄ Compare' }}</button>
     </div>
 
     <!-- Cards container (only shown when projects exist) -->
@@ -89,9 +95,17 @@
             <span class="card-date">{{ formatDate(project.created_at) }}</span>
             <span class="card-time">{{ formatTime(project.created_at) }}</span>
           </div>
-          <span class="card-progress" :class="getProgressClass(project)">
-            <span class="status-dot">●</span> {{ formatRounds(project) }}
-          </span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="card-progress" :class="getProgressClass(project)">
+              <span class="status-dot">●</span> {{ formatRounds(project) }}
+            </span>
+            <button
+              v-if="compareMode"
+              class="compare-select-btn"
+              :class="{ selected: compareSelections.includes(project.simulation_id) }"
+              @click.stop="toggleCompareSelection(project.simulation_id)"
+            >{{ compareSelections.includes(project.simulation_id) ? '✓' : '+' }}</button>
+          </div>
         </div>
 
         <!-- Bottom decoration line (expands on hover) -->
@@ -232,6 +246,43 @@ const hoveringCard = ref(null)
 const historyContainer = ref(null)
 const selectedProject = ref(null)  // Currently selected project (for modal)
 let observer = null
+
+// Compare mode
+const compareMode = ref(false)
+const compareSelections = ref([])
+
+const toggleCompareMode = () => {
+  if (compareMode.value && compareSelections.value.length === 2) {
+    // Navigate to comparison view
+    router.push({
+      name: 'Compare',
+      params: { id1: compareSelections.value[0], id2: compareSelections.value[1] }
+    })
+    compareMode.value = false
+    compareSelections.value = []
+    return
+  }
+  compareMode.value = !compareMode.value
+  compareSelections.value = []
+}
+
+const toggleCompareSelection = (simId) => {
+  const idx = compareSelections.value.indexOf(simId)
+  if (idx >= 0) {
+    compareSelections.value.splice(idx, 1)
+  } else if (compareSelections.value.length < 2) {
+    compareSelections.value.push(simId)
+  }
+  // Auto-navigate when two are selected
+  if (compareSelections.value.length === 2) {
+    router.push({
+      name: 'Compare',
+      params: { id1: compareSelections.value[0], id2: compareSelections.value[1] }
+    })
+    compareMode.value = false
+    compareSelections.value = []
+  }
+}
 let isAnimating = false  // Animation lock to prevent flickering
 let expandDebounceTimer = null  // Debounce timer
 let pendingState = null  // Target state to be executed
@@ -1421,4 +1472,34 @@ onUnmounted(() => {
   text-align: center;
   line-height: 1.5;
 }
+
+/* Compare mode */
+.compare-mode-btn {
+  padding: 5px 14px;
+  border: 1px solid rgba(10,10,10,0.2);
+  background: transparent;
+  color: rgba(10,10,10,0.5);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: 'Space Mono', monospace;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.compare-mode-btn:hover { border-color: #FF6B1A; color: #FF6B1A; }
+.compare-mode-btn.active { border-color: #FF6B1A; color: #FF6B1A; background: rgba(255,107,26,0.06); }
+
+.compare-select-btn {
+  padding: 2px 8px;
+  border: 1px solid rgba(10,10,10,0.2);
+  background: transparent;
+  color: rgba(10,10,10,0.4);
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: 'Space Mono', monospace;
+  transition: all 0.15s;
+}
+.compare-select-btn:hover { border-color: #FF6B1A; color: #FF6B1A; }
+.compare-select-btn.selected { border-color: #FF6B1A; color: #FF6B1A; background: rgba(255,107,26,0.1); }
 </style>
