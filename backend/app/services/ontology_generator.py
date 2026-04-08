@@ -9,149 +9,47 @@ from ..utils.llm_client import LLMClient, create_smart_llm_client
 
 
 # System prompt for ontology generation
-ONTOLOGY_SYSTEM_PROMPT = """You are a professional knowledge graph ontology design expert. Your task is to analyze given text content and simulation requirements, and design entity types and relationship types suitable for **social media public opinion simulation**.
+ONTOLOGY_SYSTEM_PROMPT = """You are a knowledge graph ontology designer for a social media simulation system. Output valid JSON only.
 
-**Important: You must output valid JSON format data and nothing else.**
-
-## Core Task Background
-
-We are building a **social media public opinion simulation system**. In this system:
-- Each entity is an "account" or "subject" that can speak, interact, and spread information on social media
-- Entities influence each other, repost, comment, and respond
-- We need to simulate the reactions of all parties in public opinion events and information propagation paths
-
-Therefore, **entities must be real-world subjects that can speak and interact on social media**:
-
-**Can be**:
-- Specific individuals (public figures, parties involved, opinion leaders, experts/scholars, ordinary people)
-- Companies/enterprises (including their official accounts)
-- Organizations/institutions (universities, associations, NGOs, unions, etc.)
-- Government departments, regulatory agencies
-- Media organizations (newspapers, TV stations, self-media, websites)
-- Social media platforms themselves
-- Representatives of specific groups (e.g., alumni associations, fan groups, advocacy groups, etc.)
-
-**Cannot be**:
-- Abstract concepts (e.g., "public opinion", "emotions", "trends")
-- Topics/themes (e.g., "academic integrity", "education reform")
-- Viewpoints/attitudes (e.g., "supporters", "opponents")
+Entities represent real-world subjects that can speak on social media: individuals, companies, organizations, government agencies, media outlets, advocacy groups. NOT abstract concepts, topics, or viewpoints.
 
 ## Output Format
-
-Please output JSON format with the following structure:
 
 ```json
 {
     "entity_types": [
         {
-            "name": "Entity type name (English, PascalCase)",
-            "description": "Brief description (English, no more than 100 characters)",
-            "attributes": [
-                {
-                    "name": "Attribute name (English, snake_case)",
-                    "type": "text",
-                    "description": "Attribute description"
-                }
-            ],
-            "examples": ["Example entity 1", "Example entity 2"]
+            "name": "PascalCase name",
+            "description": "Brief description (max 100 chars)",
+            "attributes": [{"name": "snake_case", "type": "text", "description": "..."}],
+            "examples": ["Example 1", "Example 2"]
         }
     ],
     "edge_types": [
         {
-            "name": "Relationship type name (English, UPPER_SNAKE_CASE)",
-            "description": "Brief description (English, no more than 100 characters)",
-            "source_targets": [
-                {"source": "Source entity type", "target": "Target entity type"}
-            ],
+            "name": "UPPER_SNAKE_CASE",
+            "description": "Brief description (max 100 chars)",
+            "source_targets": [{"source": "SourceType", "target": "TargetType"}],
             "attributes": []
         }
     ],
-    "analysis_summary": "Brief analysis summary of the text content (in English)"
+    "analysis_summary": "Brief analysis of the text content"
 }
 ```
 
-## Design Guidelines (Extremely Important!)
+## Entity Type Rules (STRICT)
 
-### 1. Entity Type Design - Must Be Strictly Followed
+- Exactly 10 entity types
+- First 8: specific types derived from the text (e.g. Student, Professor, University for academic events; Company, CEO, Employee for business)
+- Last 2 MUST be fallback types: `Person` (any individual) and `Organization` (any organization)
+- Each type needs 1-3 attributes. Reserved attribute names (do NOT use): name, uuid, group_id, created_at, summary. Use full_name, title, role, position, etc.
+- Specific types must have clear non-overlapping boundaries
 
-**Quantity requirement: Must be exactly 10 entity types**
+## Relationship Type Rules
 
-**Hierarchy requirement (must include both specific types and fallback types)**:
-
-Your 10 entity types must include the following hierarchy:
-
-A. **Fallback types (must include, placed as last 2 in the list)**:
-   - `Person`: Fallback type for any individual person. When a person does not fit other more specific person types, they fall into this category.
-   - `Organization`: Fallback type for any organization. When an organization does not fit other more specific organization types, it falls into this category.
-
-B. **Specific types (8, designed based on text content)**:
-   - Design more specific types for the main roles appearing in the text
-   - For example: if the text involves academic events, you can have `Student`, `Professor`, `University`
-   - For example: if the text involves business events, you can have `Company`, `CEO`, `Employee`
-
-**Why fallback types are needed**:
-- Various people will appear in the text, such as "elementary school teachers", "passerby A", "some netizen"
-- If there is no dedicated type match, they should be classified under `Person`
-- Similarly, small organizations, temporary groups, etc. should be classified under `Organization`
-
-**Design principles for specific types**:
-- Identify high-frequency or key role types from the text
-- Each specific type should have clear boundaries, avoiding overlap
-- Description must clearly explain the difference between this type and the fallback type
-
-### 2. Relationship Type Design
-
-- Quantity: 6-10
-- Relationships should reflect real connections in social media interactions
-- Ensure relationship source_targets cover the entity types you defined
-
-### 3. Attribute Design
-
-- 1-3 key attributes per entity type
-- **Note**: Attribute names cannot use `name`, `uuid`, `group_id`, `created_at`, `summary` (these are system reserved words)
-- Recommended: `full_name`, `title`, `role`, `position`, `location`, `description`, etc.
-
-## Entity Type Reference
-
-**Individual (specific)**:
-- Student: Student
-- Professor: Professor/Scholar
-- Journalist: Journalist
-- Celebrity: Celebrity/Influencer
-- Executive: Executive
-- Official: Government official
-- Lawyer: Lawyer
-- Doctor: Doctor
-
-**Individual (fallback)**:
-- Person: Any individual (used when not fitting other specific types above)
-
-**Organization (specific)**:
-- University: University
-- Company: Company/Enterprise
-- GovernmentAgency: Government agency
-- MediaOutlet: Media organization
-- Hospital: Hospital
-- School: K-12 School
-- NGO: Non-governmental organization
-
-**Organization (fallback)**:
-- Organization: Any organization (used when not fitting other specific types above)
-
-## Relationship Type Reference
-
-- WORKS_FOR: Works for
-- STUDIES_AT: Studies at
-- AFFILIATED_WITH: Affiliated with
-- REPRESENTS: Represents
-- REGULATES: Regulates
-- REPORTS_ON: Reports on
-- COMMENTS_ON: Comments on
-- RESPONDS_TO: Responds to
-- SUPPORTS: Supports
-- OPPOSES: Opposes
-- COLLABORATES_WITH: Collaborates with
-- COMPETES_WITH: Competes with
+- 6-10 relationship types reflecting social media interactions
+- source_targets must reference your defined entity types
+- Reference types: WORKS_FOR, STUDIES_AT, AFFILIATED_WITH, REPRESENTS, REGULATES, REPORTS_ON, COMMENTS_ON, RESPONDS_TO, SUPPORTS, OPPOSES, COLLABORATES_WITH, COMPETES_WITH
 """
 
 
@@ -205,8 +103,10 @@ class OntologyGenerator:
 
         return result
 
-    # Maximum text length sent to LLM (50,000 characters)
-    MAX_TEXT_LENGTH_FOR_LLM = 50000
+    # Maximum text length sent to LLM (20,000 characters)
+    # Most signal is in the first portion; reducing from 50K cuts inference
+    # tokens by ~60% with negligible quality loss for ontology design.
+    MAX_TEXT_LENGTH_FOR_LLM = 20000
 
     def _build_user_message(
         self,

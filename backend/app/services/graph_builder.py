@@ -52,7 +52,7 @@ class GraphBuilderService:
         graph_name: str = "MiroShark Graph",
         chunk_size: int = 500,
         chunk_overlap: int = 50,
-        batch_size: int = 3
+        max_workers: int = 6
     ) -> str:
         """
         Build graph asynchronously
@@ -81,7 +81,7 @@ class GraphBuilderService:
         # Execute build in background thread
         thread = threading.Thread(
             target=self._build_graph_worker,
-            args=(task_id, text, ontology, graph_name, chunk_size, chunk_overlap, batch_size)
+            args=(task_id, text, ontology, graph_name, chunk_size, chunk_overlap, max_workers)
         )
         thread.daemon = True
         thread.start()
@@ -96,7 +96,7 @@ class GraphBuilderService:
         graph_name: str,
         chunk_size: int,
         chunk_overlap: int,
-        batch_size: int
+        max_workers: int
     ):
         """Graph build worker thread"""
         try:
@@ -132,9 +132,9 @@ class GraphBuilderService:
                 message=f"Text split into {total_chunks} chunks"
             )
 
-            # 4. Send data in batches (NER + embedding + Neo4j insert — synchronous)
+            # 4. Process chunks in parallel (NER + embedding + Neo4j insert)
             episode_uuids = self.add_text_batches(
-                graph_id, chunks, batch_size,
+                graph_id, chunks, max_workers,
                 lambda msg, prog: self.task_manager.update_task(
                     task_id,
                     progress=20 + int(prog * 0.6),  # 20-80%
@@ -187,22 +187,21 @@ class GraphBuilderService:
         self,
         graph_id: str,
         chunks: List[str],
-        batch_size: int = 3,
+        max_workers: int = 6,
         progress_callback: Optional[Callable] = None
     ) -> List[str]:
-        """Add text in batches to graph, return uuid list of all episodes.
+        """Add text chunks to graph in parallel, return uuid list of all episodes.
 
-        Processes chunks in parallel within each batch using a thread pool.
-        The NER extraction (LLM call) dominates chunk time, and it's I/O-bound,
-        so threading gives near-linear speedup up to batch_size.
+        Uses a single thread pool across all chunks (no artificial batch
+        boundaries). NER extraction is I/O-bound (LLM call), so 6 concurrent
+        workers gives near-linear speedup without overwhelming the API.
         """
         episode_uuids = []
         total_chunks = len(chunks)
-        total_batches = (total_chunks + batch_size - 1) // batch_size
         completed = 0
         _lock = threading.Lock()
 
-        logger.info(f"[graph_build] Starting: {total_chunks} chunks, {total_batches} batches (batch_size={batch_size}, parallel)")
+        logger.info(f"[graph_build] Starting: {total_chunks} chunks, {max_workers} concurrent workers")
 
         def _process_chunk(chunk_idx: int, chunk: str) -> str:
             chunk_preview = chunk[:80].replace('\n', ' ')
@@ -218,45 +217,35 @@ class GraphBuilderService:
             )
             return episode_id
 
-        for i in range(0, total_chunks, batch_size):
-            batch_chunks = chunks[i:i + batch_size]
-            batch_num = i // batch_size + 1
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {}
+            for i, chunk in enumerate(chunks):
+                if not chunk or not chunk.strip():
+                    continue
+                chunk_idx = i + 1
+                future = pool.submit(_process_chunk, chunk_idx, chunk)
+                futures[future] = chunk_idx
 
-            if progress_callback:
-                progress = i / total_chunks
-                progress_callback(
-                    f"Processing batch {batch_num}/{total_batches} ({len(batch_chunks)} chunks)...",
-                    progress
-                )
-
-            # Process chunks within this batch in parallel
-            with ThreadPoolExecutor(max_workers=batch_size) as pool:
-                futures = {}
-                for j, chunk in enumerate(batch_chunks):
-                    if not chunk or not chunk.strip():
-                        continue
-                    chunk_idx = i + j + 1
-                    future = pool.submit(_process_chunk, chunk_idx, chunk)
-                    futures[future] = chunk_idx
-
-                for future in as_completed(futures):
-                    chunk_idx = futures[future]
-                    try:
-                        episode_id = future.result()
-                        episode_uuids.append(episode_id)
+            for future in as_completed(futures):
+                chunk_idx = futures[future]
+                try:
+                    episode_id = future.result()
+                    episode_uuids.append(episode_id)
+                    with _lock:
                         completed += 1
-                        if progress_callback:
-                            progress_callback(
-                                f"Chunk {completed}/{total_chunks} done",
-                                completed / total_chunks
-                            )
-                    except Exception as e:
-                        logger.error(
-                            f"[graph_build] Chunk {chunk_idx}/{total_chunks} FAILED: {e}"
+                        current = completed
+                    if progress_callback:
+                        progress_callback(
+                            f"Chunk {current}/{total_chunks} done",
+                            current / total_chunks
                         )
-                        if progress_callback:
-                            progress_callback(f"Batch {batch_num} processing failed: {str(e)}", 0)
-                        raise
+                except Exception as e:
+                    logger.error(
+                        f"[graph_build] Chunk {chunk_idx}/{total_chunks} FAILED: {e}"
+                    )
+                    if progress_callback:
+                        progress_callback(f"Chunk {chunk_idx} failed: {str(e)}", 0)
+                    raise
 
         logger.info(f"[graph_build] All {total_chunks} chunks processed successfully")
         return episode_uuids

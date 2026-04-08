@@ -330,7 +330,7 @@ const loadData = async () => {
     allActions.value = actions
 
     // Get total rounds
-    const maxRound = Math.max(...actions.map(a => a.round_num))
+    const maxRound = actions.length > 0 ? Math.max(...actions.map(a => a.round_num)) : 0
     totalRounds.value = detailRes.data.total_rounds || maxRound
     currentRound.value = 0
   } catch (err) {

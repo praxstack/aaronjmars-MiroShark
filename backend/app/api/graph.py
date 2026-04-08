@@ -441,9 +441,9 @@ def build_graph():
                 )
                 
                 episode_uuids = builder.add_text_batches(
-                    graph_id, 
+                    graph_id,
                     chunks,
-                    batch_size=3,
+                    max_workers=6,
                     progress_callback=add_progress_callback
                 )
                 

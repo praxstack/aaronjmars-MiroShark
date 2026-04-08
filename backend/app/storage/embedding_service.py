@@ -131,7 +131,11 @@ class EmbeddingService:
 
     def _do_request(self, payload: dict, parser) -> List[List[float]]:
         """HTTP POST with retry logic."""
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/aaronjmars/MiroShark",
+            "X-Title": "MiroShark - Universal Swarm Intelligence Engine",
+        }
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
