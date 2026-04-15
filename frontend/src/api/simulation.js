@@ -304,3 +304,27 @@ export const getAgentInterview = (simulationId, agentName) => {
   )
 }
 
+/**
+ * Get the VAPID public key for Web Push subscriptions.
+ * Returns { data: { public_key: string | null } }
+ */
+export const getVapidPublicKey = () => {
+  return service.get('/api/simulation/push/vapid-public-key')
+}
+
+/**
+ * Store a Web Push subscription for a simulation.
+ * @param {Object} data - { simulation_id, subscription }
+ */
+export const subscribePush = (data) => {
+  return service.post('/api/simulation/push/subscribe', data)
+}
+
+/**
+ * Fire a test push notification immediately (for debugging).
+ * @param {string} simulationId
+ */
+export const testPushNotification = (simulationId) => {
+  return service.post('/api/simulation/push/test', { simulation_id: simulationId })
+}
+

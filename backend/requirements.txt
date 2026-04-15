@@ -37,3 +37,7 @@ python-dotenv>=1.0.0
 
 # Data validation
 pydantic>=2.0.0
+
+# ============= Browser Push Notifications =============
+# Required for Web Push (VAPID key generation + push dispatch)
+pywebpush>=2.0.0

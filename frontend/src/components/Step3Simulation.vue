@@ -105,6 +105,28 @@
       <span class="events-platform">Reddit <span class="events-count">{{ runStatus.reddit_actions_count || 0 }}</span></span>
       <span class="events-slash">/</span>
       <span class="events-platform">Polymarket <span class="events-count">{{ runStatus.polymarket_actions_count || 0 }}</span></span>
+
+      <!-- Notify when done toggle — shown while simulation is running and push is supported -->
+      <template v-if="phase === 1 && pushSupported">
+        <span class="events-divider"></span>
+        <label
+          class="notify-toggle"
+          :class="{ active: pushSubscribed, denied: pushPermission === 'denied' }"
+          :title="pushPermission === 'denied' ? 'Notifications blocked in browser settings' : pushSubscribed ? 'Will notify when done' : 'Notify me when this simulation finishes'"
+        >
+          <input
+            type="checkbox"
+            v-model="notifyWhenDone"
+            @change="onNotifyToggle"
+            :disabled="pushPermission === 'denied' || pushSubscribed"
+            style="display:none"
+          />
+          <span class="notify-icon">{{ pushSubscribed ? '🔔' : '🔕' }}</span>
+          <span class="notify-label">
+            {{ pushSubscribed ? 'Notify on' : pushPermission === 'denied' ? 'Blocked' : 'Notify me' }}
+          </span>
+        </label>
+      </template>
     </div>
 
     <!-- Platform Status Rows -->
@@ -492,7 +514,9 @@ import {
   resumeSimulation,
   getRunStatus,
   getRunStatusDetail,
-  generateSimulationArticle
+  generateSimulationArticle,
+  getVapidPublicKey,
+  subscribePush,
 } from '../api/simulation'
 import { generateReport } from '../api/report'
 import { renderMarkdown } from '../utils/markdown'
@@ -537,6 +561,15 @@ const showBeliefDrift = ref(false)
 const showArticleDrawer = ref(false)
 const articleText = ref('')
 const isGeneratingArticle = ref(false)
+
+// Push notification state
+const pushSupported = typeof window !== 'undefined' &&
+  'Notification' in window &&
+  'serviceWorker' in navigator &&
+  'PushManager' in window
+const pushPermission = ref(typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'denied')
+const notifyWhenDone = ref(false)
+const pushSubscribed = ref(false)
 const articleError = ref(null)
 const articleCopied = ref(false)
 
@@ -659,6 +692,8 @@ const resetAllState = () => {
   startError.value = null
   isStarting.value = false
   isStopping.value = false
+  pushSubscribed.value = false
+  notifyWhenDone.value = false
   stopPolling()  // Stop any previously existing polling
 }
 
@@ -720,6 +755,75 @@ const doStartSimulation = async () => {
     isStarting.value = false
   }
 }
+
+// ── Push notifications ────────────────────────────────────────────────────────
+
+/** Convert a URL-safe base64 string to a Uint8Array (required by pushManager.subscribe). */
+function _urlB64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
+  const rawData = atob(base64)
+  return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)))
+}
+
+/**
+ * Request notification permission, subscribe to Web Push, and send the
+ * subscription to the backend tied to this simulation's ID.
+ */
+const setupPushNotification = async () => {
+  if (!pushSupported || !props.simulationId) return
+
+  try {
+    const permission = await Notification.requestPermission()
+    pushPermission.value = permission
+
+    if (permission !== 'granted') {
+      notifyWhenDone.value = false
+      return
+    }
+
+    // Fetch VAPID public key from backend
+    const keyRes = await getVapidPublicKey()
+    if (!keyRes?.data?.public_key) {
+      console.warn('[MiroShark] Push notifications unavailable — VAPID key missing')
+      notifyWhenDone.value = false
+      return
+    }
+
+    const applicationServerKey = _urlB64ToUint8Array(keyRes.data.public_key)
+
+    // Get the active service worker registration
+    const registration = await navigator.serviceWorker.ready
+
+    // Subscribe (creates or reuses an existing push subscription)
+    const subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey,
+    })
+
+    // Send subscription to backend
+    await subscribePush({
+      simulation_id: props.simulationId,
+      subscription: subscription.toJSON(),
+    })
+
+    pushSubscribed.value = true
+    addLog('Push notification registered — you will be notified when this simulation completes')
+  } catch (err) {
+    console.warn('[MiroShark] Push notification setup failed:', err)
+    notifyWhenDone.value = false
+    pushSubscribed.value = false
+  }
+}
+
+/** Called when the "Notify me" toggle changes. */
+const onNotifyToggle = () => {
+  if (notifyWhenDone.value) {
+    setupPushNotification()
+  }
+}
+
+// ── End push notifications ────────────────────────────────────────────────────
 
 // Resume simulation from last completed round
 const handleResume = async () => {
@@ -2250,4 +2354,38 @@ onUnmounted(() => {
 .article-content :deep(.md-oli) { margin: 0.3em 0; }
 .article-content :deep(.md-hr) { border: none; border-top: 1px solid rgba(10,10,10,0.1); margin: 1em 0; }
 .article-content :deep(.md-quote) { border-left: 3px solid #FF6B1A; margin: 0.8em 0; padding: 4px 12px; color: rgba(10,10,10,0.6); font-style: italic; }
+
+/* Push notification toggle inside events-summary bar */
+.notify-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background 0.15s;
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: rgba(10,10,10,0.4);
+}
+.notify-toggle:hover:not(.denied) {
+  background: rgba(10,10,10,0.06);
+  color: rgba(10,10,10,0.7);
+}
+.notify-toggle.active {
+  color: #FF6B1A;
+}
+.notify-toggle.denied {
+  cursor: default;
+  opacity: 0.5;
+}
+.notify-icon {
+  font-size: 12px;
+  line-height: 1;
+}
+.notify-label {
+  font-family: var(--font-mono, 'Space Mono', monospace);
+}
 </style>

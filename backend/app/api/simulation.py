@@ -4089,3 +4089,133 @@ def get_agent_interview_transcript(simulation_id: str, agent_name: str):
             "error": str(e),
             "traceback": traceback.format_exc()
         }), 500
+
+
+# ============== Browser Push Notification Endpoints ==============
+
+@simulation_bp.route('/push/vapid-public-key', methods=['GET'])
+def get_push_vapid_public_key():
+    """
+    Return the VAPID public key for the frontend applicationServerKey.
+
+    The key is generated on first call and cached on disk in
+    uploads/vapid_keys.json. Returns null if pywebpush is not installed.
+
+    Returns:
+        {
+            "success": true,
+            "data": {
+                "public_key": "<url-safe base64 uncompressed EC point>"
+            }
+        }
+    """
+    try:
+        from ..services.push_notification_service import get_vapid_public_key
+        key = get_vapid_public_key()
+        return jsonify({
+            "success": True,
+            "data": {"public_key": key}
+        })
+    except Exception as e:
+        logger.error(f"Failed to get VAPID public key: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+        }), 500
+
+
+@simulation_bp.route('/push/subscribe', methods=['POST'])
+def subscribe_push_notification():
+    """
+    Store a Web Push subscription for a simulation.
+
+    The subscription is tied to a simulation_id so the backend can fire
+    a notification when that specific simulation completes.
+
+    Request body:
+        {
+            "simulation_id": "sim_xxxx",
+            "subscription": {
+                "endpoint": "https://fcm.googleapis.com/...",
+                "keys": {
+                    "p256dh": "...",
+                    "auth": "..."
+                }
+            }
+        }
+
+    Returns:
+        { "success": true }
+    """
+    try:
+        data = request.get_json(force=True) or {}
+        simulation_id = data.get('simulation_id', '').strip()
+        subscription = data.get('subscription')
+
+        if not simulation_id:
+            return jsonify({"success": False, "error": "simulation_id is required"}), 400
+        if not subscription or not isinstance(subscription, dict):
+            return jsonify({"success": False, "error": "subscription object is required"}), 400
+        if not subscription.get('endpoint'):
+            return jsonify({"success": False, "error": "subscription.endpoint is required"}), 400
+
+        try:
+            validate_simulation_id(simulation_id)
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+
+        from ..services.push_notification_service import save_subscription
+        save_subscription(simulation_id, subscription)
+
+        return jsonify({"success": True})
+
+    except Exception as e:
+        logger.error(f"Failed to store push subscription: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+        }), 500
+
+
+@simulation_bp.route('/push/test', methods=['POST'])
+def test_push_notification():
+    """
+    Send a test push notification immediately.
+
+    Useful for verifying that the browser permission and VAPID setup work
+    before waiting for a long simulation to complete.
+
+    Request body:
+        { "simulation_id": "sim_xxxx" }
+
+    Returns:
+        { "success": true }
+    """
+    try:
+        data = request.get_json(force=True) or {}
+        simulation_id = data.get('simulation_id', '').strip()
+
+        if not simulation_id:
+            return jsonify({"success": False, "error": "simulation_id is required"}), 400
+
+        try:
+            validate_simulation_id(simulation_id)
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+
+        from ..services.push_notification_service import send_push_notification
+        send_push_notification(
+            simulation_id=simulation_id,
+            title="MiroShark — test notification",
+            body="Push notifications are working. You'll be notified when your simulation completes.",
+            url=f'/simulation/{simulation_id}/start',
+        )
+
+        return jsonify({"success": True})
+
+    except Exception as e:
+        logger.error(f"Failed to send test push notification: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+        }), 500

@@ -589,6 +589,26 @@ class SimulationRunner:
                 state.runner_status = RunnerStatus.COMPLETED
                 state.completed_at = datetime.now().isoformat()
                 logger.info(f"Simulation completed: {simulation_id}")
+
+                # Fire browser push notification to any subscribed clients
+                try:
+                    from .push_notification_service import send_push_notification
+                    rounds = state.current_round or 0
+                    total = state.total_rounds or 0
+                    actions = (state.twitter_actions_count or 0) + (state.reddit_actions_count or 0)
+                    body = (
+                        f"{actions} events across {rounds}/{total} rounds — open MiroShark to view results."
+                        if rounds else
+                        "Open MiroShark to view the results."
+                    )
+                    send_push_notification(
+                        simulation_id=simulation_id,
+                        title="Simulation complete",
+                        body=body,
+                        url=f'/simulation/{simulation_id}/start',
+                    )
+                except Exception as _push_err:
+                    logger.warning(f"Push notification dispatch failed: {_push_err}")
             else:
                 state.runner_status = RunnerStatus.FAILED
                 # Read error info from main log file
