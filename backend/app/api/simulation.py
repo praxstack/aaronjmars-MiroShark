@@ -2110,11 +2110,7 @@ def get_simulation_history():
             sim_dict["version"] = "v1.0.2"
 
             # Format date
-            try:
-                created_date = sim_dict.get("created_at", "")[:10]
-                sim_dict["created_date"] = created_date
-            except:
-                sim_dict["created_date"] = ""
+            sim_dict["created_date"] = (sim_dict.get("created_at") or "")[:10]
 
             # Include resolution data if it exists
             resolution_path = os.path.join(
@@ -4304,11 +4300,7 @@ def get_embed_summary(simulation_id: str):
             except Exception:
                 resolution = None
 
-        created_date = ""
-        try:
-            created_date = (state.created_at or "")[:10]
-        except Exception:
-            pass
+        created_date = (state.created_at or "")[:10]
 
         summary = {
             "simulation_id": simulation_id,
