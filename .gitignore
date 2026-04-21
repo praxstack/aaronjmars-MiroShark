@@ -5,6 +5,10 @@ Thumbs.db
 # Launcher
 .miroshark.pids
 
+# Reference-only clone of the Hyperstitions design system
+# (https://github.com/aaronjmars/design-system) — not part of the project
+design-system/
+
 # Environment variables (protect sensitive information)
 .env
 .env.local

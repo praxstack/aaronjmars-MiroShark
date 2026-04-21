@@ -6,14 +6,24 @@
         <span class="net-icon">⬡</span>
         <span class="net-label">INTERACTION NETWORK</span>
       </div>
-      <button
-        class="net-export-btn"
-        :disabled="!hasData"
-        @click="downloadPNG"
-        title="Download graph as PNG"
-      >
-        Export PNG ↓
-      </button>
+      <div class="net-header-actions">
+        <button
+          class="net-export-btn"
+          :disabled="!hasData || exporting || !copySupported"
+          :title="copySupported ? 'Copy graph as PNG (with MiroShark watermark)' : 'Image copy not supported in this browser'"
+          @click="copyChart"
+        >
+          {{ copiedFlash ? 'Copied' : 'Copy' }}
+        </button>
+        <button
+          class="net-export-btn"
+          :disabled="!hasData || exporting"
+          @click="downloadChart"
+          title="Download graph as PNG (with MiroShark watermark)"
+        >
+          Download ↓
+        </button>
+      </div>
     </div>
 
     <!-- Legend -->
@@ -54,13 +64,24 @@
     <div v-else class="net-graph-wrap">
       <svg
         ref="svgRef"
-        :viewBox="`0 0 ${W} ${H}`"
+        :viewBox="viewBox"
         preserveAspectRatio="xMidYMid meet"
         class="net-svg"
+        :class="{ 'net-svg-panning': isPanning }"
         xmlns="http://www.w3.org/2000/svg"
+        @wheel.prevent="onWheel"
+        @mousedown="onPanStart"
         @mousemove="onMouseMove"
-        @mouseleave="hoveredNode = null"
+        @mouseup="onPanEnd"
+        @mouseleave="onPanEnd(); hoveredNode = null"
+        @dblclick="resetView"
       >
+        <!-- Transparent background captures drag events on empty space -->
+        <rect
+          :x="viewX" :y="viewY"
+          :width="viewW" :height="viewH"
+          fill="transparent"
+        />
         <!-- Edges -->
         <line
           v-for="(e, i) in visibleEdges"
@@ -123,6 +144,14 @@
           <text x="0" y="34" font-size="0" fill="transparent">pad</text>
         </g>
       </svg>
+
+      <!-- Zoom controls -->
+      <div class="net-zoom-controls" aria-label="Zoom controls">
+        <button class="zoom-btn" @click="zoomBy(1.25)" title="Zoom in">+</button>
+        <button class="zoom-btn" @click="zoomBy(0.8)" title="Zoom out">−</button>
+        <button class="zoom-btn zoom-reset" @click="resetView" title="Reset view (double-click graph)">⤢</button>
+        <span class="zoom-level">{{ Math.round(zoom * 100) }}%</span>
+      </div>
     </div>
 
     <!-- Insights Panel -->
@@ -148,8 +177,15 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { getInteractionNetwork } from '../api/simulation'
+import {
+  renderSvgToCanvas,
+  downloadCanvas,
+  copyCanvasToClipboard,
+  canCopyImageToClipboard,
+  buildTitledHeader,
+} from '../utils/chartExport'
 
 const props = defineProps({
   simulationId: { type: String, required: true },
@@ -162,9 +198,107 @@ const networkData = ref(null)
 const svgRef = ref(null)
 const hoveredNode = ref(null)
 const nodePos = ref({})
+const exporting = ref(false)
+const copiedFlash = ref(false)
+let copiedFlashTimer = null
+const copySupported = canCopyImageToClipboard()
 
 const W = 560
 const H = 360
+
+// Pan/zoom state — viewBox is recomputed from these rather than
+// re-running the force layout, so node positions are stable.
+const zoom = ref(1)
+const panX = ref(0)
+const panY = ref(0)
+const isPanning = ref(false)
+const panStart = ref(null) // { mouseX, mouseY, panX0, panY0 }
+const MIN_ZOOM = 0.5
+const MAX_ZOOM = 6
+
+const viewW = computed(() => W / zoom.value)
+const viewH = computed(() => H / zoom.value)
+const viewX = computed(() => panX.value)
+const viewY = computed(() => panY.value)
+const viewBox = computed(() =>
+  `${viewX.value} ${viewY.value} ${viewW.value} ${viewH.value}`
+)
+
+// Translate a browser-pixel point on the SVG to viewBox (SVG user) coords.
+const _svgPoint = (event) => {
+  const svg = svgRef.value
+  if (!svg) return { x: 0, y: 0 }
+  const rect = svg.getBoundingClientRect()
+  // SVG uses preserveAspectRatio="xMidYMid meet" — the viewBox is uniformly
+  // scaled to fit the smaller of (rect.w / viewW) or (rect.h / viewH) and
+  // centered in the other axis.
+  const scale = Math.min(rect.width / viewW.value, rect.height / viewH.value)
+  const renderedW = viewW.value * scale
+  const renderedH = viewH.value * scale
+  const offsetX = (rect.width - renderedW) / 2
+  const offsetY = (rect.height - renderedH) / 2
+  const localX = (event.clientX - rect.left - offsetX) / scale + viewX.value
+  const localY = (event.clientY - rect.top - offsetY) / scale + viewY.value
+  return { x: localX, y: localY }
+}
+
+const _clampZoom = (z) => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z))
+
+const onWheel = (event) => {
+  // Trackpad pinch and Ctrl+wheel both arrive as wheel events; delta sign
+  // chooses direction. deltaY < 0 → zoom in.
+  const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1
+  const newZoom = _clampZoom(zoom.value * factor)
+  if (newZoom === zoom.value) return
+  const anchor = _svgPoint(event)
+  const ratio = zoom.value / newZoom
+  // Keep the anchor point stationary on screen: the viewBox origin moves
+  // so the anchor lands at the same viewBox coordinate after rescaling.
+  // Fall back to center-zoom if the anchor math degenerates (e.g. svg not
+  // laid out yet, programmatic wheel event without clientX/Y).
+  const ax = Number.isFinite(anchor.x) ? anchor.x : panX.value + viewW.value / 2
+  const ay = Number.isFinite(anchor.y) ? anchor.y : panY.value + viewH.value / 2
+  panX.value = ax - (ax - panX.value) * ratio
+  panY.value = ay - (ay - panY.value) * ratio
+  zoom.value = newZoom
+}
+
+const zoomBy = (factor) => {
+  const newZoom = _clampZoom(zoom.value * factor)
+  if (newZoom === zoom.value) return
+  // Zoom around the viewBox center when using buttons.
+  const centerX = panX.value + viewW.value / 2
+  const centerY = panY.value + viewH.value / 2
+  const ratio = zoom.value / newZoom
+  panX.value = centerX - (centerX - panX.value) * ratio
+  panY.value = centerY - (centerY - panY.value) * ratio
+  zoom.value = newZoom
+}
+
+const resetView = () => {
+  zoom.value = 1
+  panX.value = 0
+  panY.value = 0
+}
+
+const onPanStart = (event) => {
+  // Left mouse button only; don't start panning when the click lands on a
+  // node (node mouseenter handles its own hover state).
+  if (event.button !== 0) return
+  isPanning.value = true
+  panStart.value = {
+    mouseX: event.clientX,
+    mouseY: event.clientY,
+    panX0: panX.value,
+    panY0: panY.value,
+  }
+  hoveredNode.value = null
+}
+
+const onPanEnd = () => {
+  isPanning.value = false
+  panStart.value = null
+}
 
 const hasData = computed(() =>
   networkData.value?.nodes?.length > 0
@@ -270,7 +404,20 @@ const edgeWidth = (e) => {
   return 0.5 + (e.weight / maxWeight.value) * 3
 }
 
-const onMouseMove = () => {}
+const onMouseMove = (event) => {
+  if (!isPanning.value || !panStart.value || !svgRef.value) return
+  // Translate pixel delta to viewBox delta using the same preserveAspectRatio
+  // meet-fit math as _svgPoint.
+  const rect = svgRef.value.getBoundingClientRect()
+  if (!rect.width || !rect.height) return
+  const scale = Math.min(rect.width / viewW.value, rect.height / viewH.value)
+  if (!Number.isFinite(scale) || scale <= 0) return
+  const dx = (event.clientX - panStart.value.mouseX) / scale
+  const dy = (event.clientY - panStart.value.mouseY) / scale
+  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return
+  panX.value = panStart.value.panX0 - dx
+  panY.value = panStart.value.panY0 - dy
+}
 
 const runForceLayout = () => {
   if (!hasData.value) return
@@ -369,6 +516,7 @@ const load = async () => {
     if (res.success && res.data) {
       networkData.value = res.data
       activePlatforms.value = []
+      resetView()
       await nextTick()
       runForceLayout()
     } else if (res.success && !res.data) {
@@ -383,32 +531,73 @@ const load = async () => {
   }
 }
 
-const downloadPNG = () => {
-  const svg = svgRef.value
-  if (!svg) return
-  const serializer = new XMLSerializer()
-  const svgStr = serializer.serializeToString(svg)
-  const canvas = document.createElement('canvas')
-  canvas.width = W * 2
-  canvas.height = H * 2
-  const ctx = canvas.getContext('2d')
-  ctx.fillStyle = '#FAFAFA'
-  ctx.fillRect(0, 0, canvas.width, canvas.height)
-  const img = new Image()
-  img.onload = () => {
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-    const a = document.createElement('a')
-    a.download = `interaction-network-${props.simulationId}.png`
-    a.href = canvas.toDataURL('image/png')
-    a.click()
+// ── Graph export (copy + download, with MiroShark watermark) ──
+
+const _buildExportCanvas = () => {
+  if (!svgRef.value || !hasData.value) throw new Error('No graph to export')
+  const nodeCount = (networkData.value?.nodes || []).length
+  const edgeCount = (networkData.value?.edges || []).length
+  const { drawHeader, headerHeight } = buildTitledHeader({
+    title: 'Interaction Network',
+    subtitle: `${nodeCount} agents · ${edgeCount} edges`,
+    width: W,
+  })
+  return renderSvgToCanvas(svgRef.value, {
+    width: W,
+    height: H,
+    scale: 2,
+    headerHeight,
+    drawHeader,
+    subtitle: `${props.simulationId} · ${new Date().toLocaleDateString()}`,
+  })
+}
+
+const _flashCopied = () => {
+  copiedFlash.value = true
+  if (copiedFlashTimer) clearTimeout(copiedFlashTimer)
+  copiedFlashTimer = setTimeout(() => { copiedFlash.value = false }, 1600)
+}
+
+async function copyChart() {
+  if (exporting.value || !hasData.value) return
+  exporting.value = true
+  try {
+    const canvas = await _buildExportCanvas()
+    await copyCanvasToClipboard(canvas)
+    _flashCopied()
+  } catch (err) {
+    console.warn('[network] copy failed, falling back to download:', err)
+    try {
+      const canvas = await _buildExportCanvas()
+      downloadCanvas(canvas, `miroshark-network-${props.simulationId}.png`)
+    } catch (err2) {
+      console.error('[network] download fallback failed:', err2)
+    }
+  } finally {
+    exporting.value = false
   }
-  img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgStr)))
+}
+
+async function downloadChart() {
+  if (exporting.value || !hasData.value) return
+  exporting.value = true
+  try {
+    const canvas = await _buildExportCanvas()
+    downloadCanvas(canvas, `miroshark-network-${props.simulationId}.png`)
+  } catch (err) {
+    console.error('[network] download failed:', err)
+  } finally {
+    exporting.value = false
+  }
 }
 
 watch(() => props.visible, (val) => { if (val) load() })
 watch(() => props.simulationId, () => { if (props.visible) load() })
 watch(activePlatforms, () => { nextTick(() => runForceLayout()) })
 onMounted(() => { if (props.visible) load() })
+onBeforeUnmount(() => {
+  if (copiedFlashTimer) clearTimeout(copiedFlashTimer)
+})
 </script>
 
 <style scoped>
@@ -449,6 +638,12 @@ onMounted(() => { if (props.visible) load() })
   color: rgba(10,10,10,0.5);
 }
 
+.net-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .net-export-btn {
   background: none;
   border: 1px solid rgba(10,10,10,0.15);
@@ -462,8 +657,8 @@ onMounted(() => { if (props.visible) load() })
 }
 
 .net-export-btn:hover:not(:disabled) {
-  border-color: #8b5cf6;
-  color: #8b5cf6;
+  border-color: var(--color-orange);
+  color: var(--color-orange);
 }
 
 .net-export-btn:disabled {
@@ -581,7 +776,8 @@ onMounted(() => { if (props.visible) load() })
   align-items: center;
   justify-content: center;
   padding: 4px 8px;
-  min-height: 0;
+  min-height: 340px;
+  position: relative;
 }
 
 .net-svg {
@@ -589,7 +785,65 @@ onMounted(() => { if (props.visible) load() })
   height: 100%;
   max-height: 380px;
   overflow: visible;
-  cursor: crosshair;
+  cursor: grab;
+  touch-action: none;
+}
+
+.net-svg-panning {
+  cursor: grabbing;
+}
+
+/* Zoom controls — bottom-right overlay */
+.net-zoom-controls {
+  position: absolute;
+  bottom: 10px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  background: rgba(250, 250, 250, 0.9);
+  border: 1px solid rgba(10, 10, 10, 0.12);
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  user-select: none;
+}
+
+.zoom-btn {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-white);
+  border: 1px solid rgba(10, 10, 10, 0.15);
+  color: var(--color-black);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: var(--transition-fast);
+  padding: 0;
+}
+
+.zoom-btn:hover {
+  background: var(--color-orange);
+  color: var(--color-white);
+  border-color: var(--color-orange);
+}
+
+.zoom-reset {
+  font-size: 12px;
+}
+
+.zoom-level {
+  min-width: 36px;
+  text-align: right;
+  padding: 0 6px;
+  font-size: 10px;
+  color: rgba(10, 10, 10, 0.55);
+  letter-spacing: 0.5px;
 }
 
 .net-node {

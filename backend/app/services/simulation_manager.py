@@ -53,6 +53,10 @@ class SimulationState:
     enable_reddit: bool = True
     enable_polymarket: bool = False
 
+    # Number of prediction markets to generate when Polymarket is enabled.
+    # Defaults to 1 (historical behavior). Range [1, 5] enforced upstream.
+    polymarket_market_count: int = 1
+
     # Status
     status: SimulationStatus = SimulationStatus.CREATED
 
@@ -95,6 +99,7 @@ class SimulationState:
             "enable_twitter": self.enable_twitter,
             "enable_reddit": self.enable_reddit,
             "enable_polymarket": self.enable_polymarket,
+            "polymarket_market_count": self.polymarket_market_count,
             "status": self.status.value,
             "entities_count": self.entities_count,
             "profiles_count": self.profiles_count,
@@ -191,6 +196,7 @@ class SimulationManager:
             enable_twitter=data.get("enable_twitter", True),
             enable_reddit=data.get("enable_reddit", True),
             enable_polymarket=data.get("enable_polymarket", False),
+            polymarket_market_count=int(data.get("polymarket_market_count", 1) or 1),
             status=SimulationStatus(data.get("status", "created")),
             entities_count=data.get("entities_count", 0),
             profiles_count=data.get("profiles_count", 0),
@@ -218,6 +224,7 @@ class SimulationManager:
         enable_twitter: bool = True,
         enable_reddit: bool = True,
         enable_polymarket: bool = False,
+        polymarket_market_count: int = 1,
     ) -> SimulationState:
         """
         Create a new simulation
@@ -242,6 +249,7 @@ class SimulationManager:
             enable_twitter=enable_twitter,
             enable_reddit=enable_reddit,
             enable_polymarket=enable_polymarket,
+            polymarket_market_count=max(1, min(5, int(polymarket_market_count or 1))),
             status=SimulationStatus.CREATED,
         )
         
@@ -445,7 +453,8 @@ class SimulationManager:
                 document_text=document_text,
                 entities=filtered.entities,
                 enable_twitter=state.enable_twitter,
-                enable_reddit=state.enable_reddit
+                enable_reddit=state.enable_reddit,
+                polymarket_market_count=state.polymarket_market_count,
             )
             
             if progress_callback:
@@ -694,6 +703,7 @@ class SimulationManager:
             enable_twitter=parent.enable_twitter,
             enable_reddit=parent.enable_reddit,
             enable_polymarket=parent.enable_polymarket,
+            polymarket_market_count=parent.polymarket_market_count,
             status=SimulationStatus.READY,
             entities_count=parent.entities_count,
             profiles_count=parent.profiles_count,

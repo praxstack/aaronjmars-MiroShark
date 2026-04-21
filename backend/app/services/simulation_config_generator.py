@@ -266,6 +266,7 @@ class SimulationConfigGenerator:
         entities: List[EntityNode],
         enable_twitter: bool = True,
         enable_reddit: bool = True,
+        polymarket_market_count: int = 1,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
     ) -> SimulationParameters:
         """
@@ -323,7 +324,10 @@ class SimulationConfigGenerator:
 
         # ========== Step 2b: Generate prediction markets ==========
         report_progress(3, "Generating prediction markets...")
-        markets = self._generate_prediction_markets(context, simulation_requirement, event_config)
+        markets = self._generate_prediction_markets(
+            context, simulation_requirement, event_config,
+            num_markets=polymarket_market_count,
+        )
         event_config.initial_markets = markets
         reasoning_parts.append(f"Prediction markets: {len(markets)} markets generated")
 
@@ -863,26 +867,50 @@ Return JSON format (no markdown):
         context: str,
         simulation_requirement: str,
         event_config: EventConfig,
+        num_markets: int = 1,
     ) -> List[Dict[str, Any]]:
         """Generate prediction markets from the simulation requirement.
 
-        Creates 3-5 well-formed YES/NO questions that agents can trade on.
-        Each market has an initial probability estimate that sets the starting price.
+        Creates *num_markets* well-formed YES/NO questions that agents can
+        trade on. Each market has an initial probability estimate that sets
+        the starting price. Clamped to [1, 5].
         """
+        num_markets = max(1, min(5, int(num_markets or 1)))
         hot_topics = event_config.hot_topics[:5] if event_config.hot_topics else []
+        singular = num_markets == 1
+        count_word = {1: "ONE", 2: "TWO", 3: "THREE", 4: "FOUR", 5: "FIVE"}[num_markets]
+
+        if singular:
+            count_rule = (
+                "- Create exactly ONE prediction market as a YES/NO question\n"
+                "- The question must be the SINGLE BEST market that captures the "
+                "core tension of the simulation scenario\n"
+            )
+        else:
+            count_rule = (
+                f"- Create exactly {count_word} ({num_markets}) distinct prediction markets as YES/NO questions\n"
+                "- Together they should cover different axes of the simulation — "
+                "e.g. a short-term vs long-term outcome, a technical vs social question, "
+                "a bullish vs bearish frame — NOT variations of the same question\n"
+                "- Rank them by importance: the first market is the most central\n"
+            )
 
         system_prompt = (
             "You are a prediction market designer. Return pure JSON.\n\n"
             "RULES:\n"
-            "- Create exactly ONE prediction market as a YES/NO question\n"
-            "- The question must be the SINGLE BEST market that captures the "
-            "core tension of the simulation scenario\n"
-            "- It must be SPECIFIC, TIME-BOUND, and RESOLVABLE "
+            f"{count_rule}"
+            "- Each question must be SPECIFIC, TIME-BOUND, and RESOLVABLE "
             "(e.g., 'Will X happen by Y date?' not 'Is X good?')\n"
-            "- The question should be something the simulated agents would "
+            "- Each question should be something the simulated agents would "
             "genuinely DISAGREE about — not a foregone conclusion\n"
             "- Set initial_probability to your best estimate (0.15-0.85). "
             "This becomes the starting YES price. Avoid 0.50 — have an opinion.\n"
+        )
+
+        intent_line = (
+            "Generate ONE prediction market that best captures the central question of this simulation:"
+            if singular else
+            f"Generate {count_word} ({num_markets}) DISTINCT prediction markets covering different angles of this simulation:"
         )
 
         user_prompt = f"""Simulation: {simulation_requirement}
@@ -892,7 +920,7 @@ Hot topics: {', '.join(hot_topics) if hot_topics else 'N/A'}
 Context:
 {context[:2000]}
 
-Generate ONE prediction market that best captures the central question of this simulation:
+{intent_line}
 {{
   "markets": [
     {{
@@ -914,7 +942,7 @@ Generate ONE prediction market that best captures the central question of this s
 
             markets_raw = result.get("markets", [])
             markets = []
-            for m in markets_raw[:1]:  # exactly one market
+            for m in markets_raw[:num_markets]:
                 question = m.get("question", "")
                 if not question:
                     continue

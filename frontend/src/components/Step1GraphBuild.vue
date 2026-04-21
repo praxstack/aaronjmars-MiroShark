@@ -172,6 +172,23 @@
             </div>
           </div>
 
+          <div class="sim-settings">
+            <label class="sim-setting-row" for="market-count-select">
+              <span class="sim-setting-label">Prediction markets</span>
+              <select
+                id="market-count-select"
+                class="sim-setting-select"
+                v-model.number="marketCount"
+                :disabled="creatingSimulation"
+                title="How many prediction markets to generate for this simulation"
+              >
+                <option v-for="n in 5" :key="n" :value="n">
+                  {{ n }} {{ n === 1 ? 'market' : 'markets' }}
+                </option>
+              </select>
+            </label>
+          </div>
+
           <button
             class="action-btn"
             :disabled="currentPhase < 2 || creatingSimulation"
@@ -223,6 +240,7 @@ const logContent = ref(null)
 const dashboardCollapsed = ref(true)
 const creatingSimulation = ref(false)
 const existingSimulations = ref([])
+const marketCount = ref(3)
 
 // Check for existing simulations for this project
 const loadExistingSimulations = async () => {
@@ -259,7 +277,8 @@ const handleEnterEnvSetup = async () => {
       graph_id: props.projectData.graph_id,
       enable_twitter: true,
       enable_reddit: true,
-      enable_polymarket: true
+      enable_polymarket: true,
+      polymarket_market_count: marketCount.value,
     })
 
     if (res.success && res.data?.simulation_id) {
@@ -661,6 +680,51 @@ watch(() => props.systemLogs.length, () => {
   letter-spacing: 3px;
   margin-top: 4px;
   display: block;
+}
+
+/* Pre-launch simulation settings row (number of prediction markets, etc.) */
+.sim-settings {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(10, 10, 10, 0.08);
+  background: rgba(10, 10, 10, 0.015);
+  font-family: var(--font-mono);
+}
+
+.sim-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sim-setting-label {
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: rgba(10, 10, 10, 0.55);
+  font-weight: 600;
+}
+
+.sim-setting-select {
+  background: var(--color-white);
+  border: 1px solid rgba(10, 10, 10, 0.15);
+  padding: 4px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-black);
+  cursor: pointer;
+  outline: none;
+  border-radius: 0;
+}
+
+.sim-setting-select:focus {
+  border-color: var(--color-orange);
+}
+
+.sim-setting-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Step 03 Button */

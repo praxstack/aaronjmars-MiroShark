@@ -517,3 +517,20 @@ export const suggestScenarios = (data) => {
   return service.post('/api/simulation/suggest-scenarios', data, { timeout: 25000 })
 }
 
+/**
+ * List all Polymarket prediction markets for a simulation.
+ * @param {string} simulationId
+ */
+export const getPolymarketMarkets = (simulationId) => {
+  return service.get(`/api/simulation/${simulationId}/polymarket/markets`)
+}
+
+/**
+ * Time-series of YES price for a single market, reconstructed from trades.
+ * @param {string} simulationId
+ * @param {number} marketId
+ */
+export const getPolymarketMarketPrices = (simulationId, marketId) => {
+  return service.get(`/api/simulation/${simulationId}/polymarket/market/${marketId}/prices`)
+}
+

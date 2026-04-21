@@ -54,7 +54,7 @@
         v-if="allActions.length > 0"
         class="action-btn secondary"
         :class="{ active: showInfluence }"
-        @click="showInfluence = !showInfluence; showBeliefDrift = false; showDirector = false; showNetwork = false; showDemographics = false; showWhatIf = false; showBranch = false"
+        @click="toggleOverlay('influence')"
         title="Agent influence leaderboard"
       >
         ◈ Influence
@@ -65,7 +65,7 @@
         v-if="allActions.length > 0"
         class="action-btn secondary"
         :class="{ active: showBeliefDrift }"
-        @click="showBeliefDrift = !showBeliefDrift; showInfluence = false; showDirector = false; showNetwork = false; showDemographics = false; showWhatIf = false; showBranch = false"
+        @click="toggleOverlay('drift')"
         title="Aggregate belief drift chart"
       >
         ◎ Drift
@@ -76,7 +76,7 @@
         v-if="allActions.length > 0"
         class="action-btn secondary"
         :class="{ active: showNetwork }"
-        @click="showNetwork = !showNetwork; showInfluence = false; showBeliefDrift = false; showDirector = false; showDemographics = false; showWhatIf = false; showBranch = false"
+        @click="toggleOverlay('network')"
         title="Agent interaction network graph"
       >
         ⬡ Network
@@ -87,10 +87,22 @@
         v-if="allActions.length > 0"
         class="action-btn secondary"
         :class="{ active: showDemographics }"
-        @click="showDemographics = !showDemographics; showInfluence = false; showBeliefDrift = false; showDirector = false; showNetwork = false; showWhatIf = false; showBranch = false"
+        @click="toggleOverlay('demographics')"
         title="Agent demographic breakdown (age, gender, country, actor type, platform)"
       >
         ◇ Demographics
+      </button>
+
+      <!-- Prediction Markets (only when polymarket is enabled/has data) -->
+      <button
+        v-if="runStatus.polymarket_running || runStatus.polymarket_completed || (runStatus.polymarket_actions_count || 0) > 0"
+        class="action-btn secondary polymarket-btn"
+        :class="{ active: showPolymarketChart }"
+        @click="toggleOverlay('markets')"
+        title="Live prediction market price chart"
+      >
+        <img src="/pm.png" class="btn-platform-icon" alt="" />
+        Markets
       </button>
 
       <!-- What If? Counterfactual toggle -->
@@ -98,7 +110,7 @@
         v-if="allActions.length > 0"
         class="action-btn secondary"
         :class="{ active: showWhatIf }"
-        @click="showWhatIf = !showWhatIf; showInfluence = false; showBeliefDrift = false; showDirector = false; showNetwork = false; showDemographics = false; showBranch = false"
+        @click="toggleOverlay('whatif')"
         title="What If? — remove agents and recompute belief drift from existing trajectory"
       >
         ◐ What If?
@@ -109,7 +121,7 @@
         v-if="phase === 1"
         class="action-btn secondary director-btn"
         :class="{ active: showDirector }"
-        @click="showDirector = !showDirector; showInfluence = false; showBeliefDrift = false; showNetwork = false; showDemographics = false; showWhatIf = false; showBranch = false"
+        @click="toggleOverlay('director')"
         :title="directorEventsTotal >= 10 ? 'Director Mode — max events reached' : 'Director Mode — inject a breaking event into the simulation'"
       >
         ⚡ Director
@@ -121,7 +133,7 @@
         v-if="phase !== 0"
         class="action-btn secondary"
         :class="{ active: showBranch }"
-        @click="showBranch = !showBranch; showInfluence = false; showBeliefDrift = false; showNetwork = false; showDemographics = false; showWhatIf = false; showDirector = false"
+        @click="toggleOverlay('branch')"
         title="Fork this simulation with a narrative injection scheduled for a specific round"
       >
         ⤷ Branch
@@ -298,6 +310,15 @@
       class="influence-overlay"
     />
 
+    <!-- Prediction Markets (overlay when toggled — sibling of the other panels) -->
+    <PolymarketChart
+      v-if="showPolymarketChart"
+      :simulationId="simulationId"
+      :visible="showPolymarketChart"
+      :live="phase === 1 && (runStatus.polymarket_running || false)"
+      class="influence-overlay"
+    />
+
     <!-- Counterfactual Branch (overlay when toggled) -->
     <div v-if="showBranch" class="influence-overlay">
       <CounterfactualBranchPanel
@@ -345,17 +366,21 @@
       <!-- Event History -->
       <div v-if="directorEventHistory.length > 0" class="director-history">
         <div class="director-history-title">Injected Events</div>
-        <div
+        <button
           v-for="evt in directorEventHistory"
           :key="evt.id"
-          class="director-event-card"
+          class="director-event-card director-event-card-clickable"
+          type="button"
+          title="Show this event on the timeline"
+          @click="jumpToDirectorEvent(evt)"
         >
           <div class="director-event-header">
             <span class="director-event-badge">⚡ ROUND {{ evt.injected_at_round || evt.submitted_at_round }}</span>
             <span class="director-event-time">{{ formatEventTime(evt.timestamp) }}</span>
+            <span class="director-event-jump">↗</span>
           </div>
           <div class="director-event-text">{{ evt.event_text }}</div>
-        </div>
+        </button>
       </div>
 
       <!-- Pending Events -->
@@ -375,7 +400,7 @@
     </div>
 
     <!-- Main Content: Dual Timeline -->
-    <div v-show="!showInfluence && !showBeliefDrift && !showDirector && !showNetwork && !showDemographics && !showBranch && !showWhatIf" class="main-content-area" ref="scrollContainer" @scroll="onTimelineScroll">
+    <div v-show="!showInfluence && !showBeliefDrift && !showDirector && !showNetwork && !showDemographics && !showBranch && !showWhatIf && !showPolymarketChart" class="main-content-area" ref="scrollContainer" @scroll="onTimelineScroll">
       <!-- Scroll to bottom button -->
       <button
         v-if="showScrollBtn"
@@ -411,7 +436,8 @@
             v-for="action in chronologicalActions"
             :key="action._uniqueId || action.id || `${action.timestamp}-${action.agent_id}`"
             class="timeline-item"
-            :class="[action.platform, { 'director-event': action._isDirectorEvent }]"
+            :class="[action.platform, { 'director-event': action._isDirectorEvent, 'timeline-item-flash': flashedEventId === action._uniqueId }]"
+            :data-event-id="action._uniqueId"
           >
             <div class="timeline-marker">
               <div class="marker-dot"></div>
@@ -702,6 +728,7 @@
         </div>
       </div>
     </Transition>
+
   </div>
 </template>
 
@@ -728,6 +755,7 @@ import InteractionNetwork from './InteractionNetwork.vue'
 import DemographicBreakdown from './DemographicBreakdown.vue'
 import WhatIfPanel from './WhatIfPanel.vue'
 import CounterfactualBranchPanel from './CounterfactualBranchPanel.vue'
+import PolymarketChart from './PolymarketChart.vue'
 
 const props = defineProps({
   simulationId: String,
@@ -766,6 +794,9 @@ const showNetwork = ref(false)
 const showDemographics = ref(false)
 const showWhatIf = ref(false)
 const showBranch = ref(false)
+const showPolymarketChart = ref(false)
+const flashedEventId = ref(null)
+let flashedEventTimer = null
 // Preset counterfactual branches carried over from the template that
 // seeded this simulation (if any). The runner's currently-active simulation
 // object exposes no template_id, so we best-effort resolve via the parent
@@ -776,6 +807,26 @@ const presetCounterfactualBranches = ref([])
 const showArticleDrawer = ref(false)
 const articleText = ref('')
 const isGeneratingArticle = ref(false)
+
+// Overlay toggle — exactly one panel is visible at a time. Passing the same
+// key twice closes it, mirroring the behaviour the toolbar had before Markets
+// was split out into a full-screen modal.
+const toggleOverlay = (which) => {
+  const next = {
+    influence: false, drift: false, network: false, demographics: false,
+    markets: false, whatif: false, director: false, branch: false,
+  }
+  const keyToRef = {
+    influence: showInfluence, drift: showBeliefDrift, network: showNetwork,
+    demographics: showDemographics, markets: showPolymarketChart,
+    whatif: showWhatIf, director: showDirector, branch: showBranch,
+  }
+  const target = keyToRef[which]
+  if (!target) return
+  const willOpen = !target.value
+  for (const key of Object.keys(keyToRef)) keyToRef[key].value = next[key]
+  target.value = willOpen
+}
 
 // Director Mode state
 const showDirector = ref(false)
@@ -883,6 +934,39 @@ const onTimelineScroll = () => {
 const scrollToBottom = () => {
   const el = scrollContainer.value
   if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+}
+
+// Injected-event jump: close any open overlay panel (timeline is hidden
+// behind them) so the timeline is visible, then scroll the matching
+// timeline-item into view and flash it briefly.
+const jumpToDirectorEvent = async (evt) => {
+  if (!evt?.id) return
+  const uniqueId = 'director-' + evt.id
+
+  // Close all overlays so the timeline is visible.
+  showDirector.value = false
+  showInfluence.value = false
+  showBeliefDrift.value = false
+  showNetwork.value = false
+  showDemographics.value = false
+  showWhatIf.value = false
+  showBranch.value = false
+
+  // Clear any platform/agent filter that could be hiding the item.
+  filteredPlatform.value = null
+  filteredAgent.value = null
+
+  await nextTick()
+  const node = scrollContainer.value?.querySelector(`[data-event-id="${uniqueId}"]`)
+  if (!node) return
+  node.scrollIntoView({ behavior: 'smooth', block: 'center' })
+
+  flashedEventId.value = uniqueId
+  if (flashedEventTimer) clearTimeout(flashedEventTimer)
+  flashedEventTimer = setTimeout(() => {
+    flashedEventId.value = null
+    flashedEventTimer = null
+  }, 1800)
 }
 
 // Computed
@@ -1554,17 +1638,19 @@ onUnmounted(() => {
 }
 
 /* --- Actions Bar (buttons) --- */
+/* Compact toolbar using the design-system filter-button language. */
 .actions-bar {
   background: var(--color-gray, #F5F5F5);
-  padding: 6px 12px;
+  padding: var(--space-sm) var(--space-md);
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 6px;
-  border-bottom: 2px solid rgba(10,10,10,0.08);
+  align-items: center;
+  gap: var(--space-xs);
+  border-bottom: var(--border-light);
 }
 .actions-bar .action-btn {
-  flex: 0 1 calc(33.333% - 4px);
+  flex: 0 0 auto;
 }
 
 .events-summary {
@@ -1587,7 +1673,7 @@ onUnmounted(() => {
 }
 
 .events-total {
-  color: #FF6B1A;
+  color: var(--color-orange, #FF6B1A);
   font-weight: 700;
   font-size: 13px;
 }
@@ -1604,7 +1690,7 @@ onUnmounted(() => {
 }
 
 .events-count {
-  color: #0A0A0A;
+  color: var(--color-black, #0A0A0A);
   font-weight: 700;
 }
 
@@ -1959,52 +2045,60 @@ onUnmounted(() => {
   align-items: center;
 }
 
-/* Action Button */
+/* Action Button — descended from design-system filter-button pattern:
+   transparent base + 2px border + 40% opacity text + uppercase mono type.
+   Sharpens on hover, takes on orange when toggled, goes solid for CTAs. */
 .action-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  padding: 5px 12px;
-  min-width: 100px;
+  gap: var(--space-xs);
+  padding: 8px 14px;
   font-family: var(--font-mono, 'Space Mono', monospace);
-  font-size: 10px;
-  font-weight: 600;
-  border: none;
-  cursor: pointer;
-  transition: all 0.2s ease;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 2.5px;
   text-transform: uppercase;
-  letter-spacing: 3px;
   white-space: nowrap;
+  background: transparent;
+  color: rgba(10,10,10,0.4);
+  border: 2px solid rgba(10,10,10,0.12);
+  cursor: pointer;
+  transition: var(--transition-fast, all 0.1s ease);
 }
 
+.action-btn:hover:not(:disabled) {
+  border-color: rgba(10,10,10,0.3);
+  color: rgba(10,10,10,0.7);
+}
+
+/* Primary CTA — filled black (design system .btn-primary) */
 .action-btn.primary {
-  background: #0A0A0A;
-  color: #FAFAFA;
+  background: var(--color-black, #0A0A0A);
+  color: var(--color-white, #FAFAFA);
+  border-color: var(--color-black, #0A0A0A);
 }
 
 .action-btn.primary:hover:not(:disabled) {
-  background: rgba(10,10,10,0.7);
+  opacity: 0.9;
+  border-color: var(--color-black, #0A0A0A);
+  color: var(--color-white, #FAFAFA);
 }
 
-.action-btn.secondary {
-  background: #FAFAFA;
-  color: rgba(10,10,10,0.7);
-  border: 2px solid rgba(10,10,10,0.12);
-}
+/* Secondary — base style (explicit class kept for template back-compat) */
+.action-btn.secondary { /* inherits from .action-btn */ }
 
-.action-btn.secondary:hover:not(:disabled) {
-  background: var(--color-gray, #F5F5F5);
-  border-color: rgba(10,10,10,0.2);
-}
-
+/* Danger — filled red (Pause / destructive) */
 .action-btn.danger {
-  background: #FF4444;
-  color: #FAFAFA;
+  background: var(--color-red, #FF4444);
+  color: var(--color-white, #FAFAFA);
+  border-color: var(--color-red, #FF4444);
 }
 
 .action-btn.danger:hover:not(:disabled) {
-  background: #E03C3C;
+  opacity: 0.9;
+  border-color: var(--color-red, #FF4444);
+  color: var(--color-white, #FAFAFA);
 }
 
 .action-btn:disabled {
@@ -2028,11 +2122,31 @@ onUnmounted(() => {
   border-top: 1px solid rgba(10,10,10,0.06);
 }
 
-/* Highlight the active influence toggle button */
+/* Toggled-on state — orange border + text (same accent as hover, sticky).
+   Distinct from .primary (solid black) and .danger (solid red), so the three
+   semantic states stay visually separable. */
 .action-btn.active {
-  background: var(--color-orange);
-  color: var(--color-white);
+  background: transparent;
+  color: var(--color-orange);
   border-color: var(--color-orange);
+}
+
+.action-btn.active:hover:not(:disabled) {
+  color: var(--color-orange);
+  border-color: var(--color-orange);
+}
+
+/* Polymarket chart button — inline platform icon */
+.btn-platform-icon {
+  width: 13px;
+  height: 13px;
+  vertical-align: -1px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.action-btn.polymarket-btn {
+  gap: var(--space-xs);
 }
 
 .agent-info.clickable {
@@ -2543,15 +2657,21 @@ onUnmounted(() => {
 .log-msg { color: rgba(250,250,250,0.6); word-break: break-all; }
 .mono { font-family: var(--font-mono, 'Space Mono', monospace); }
 
-/* Loading spinner for button */
+/* Loading spinner for button — adapts to whichever button hosts it. */
 .loading-spinner-small {
   display: inline-block;
-  width: 14px;
-  height: 14px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: #FF6B1A;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(10, 10, 10, 0.15);
+  border-top-color: var(--color-orange, #FF6B1A);
   animation: spin 0.8s linear infinite;
-  margin-right: 6px;
+}
+/* On filled buttons (primary/danger) the spinner lives on dark — flip the
+   track color so it stays visible. */
+.action-btn.primary .loading-spinner-small,
+.action-btn.danger .loading-spinner-small {
+  border-color: rgba(255, 255, 255, 0.3);
+  border-top-color: var(--color-orange, #FF6B1A);
 }
 
 /* ---- Article Drawer ---- */
@@ -2742,19 +2862,20 @@ onUnmounted(() => {
 .article-content :deep(.md-quote) { border-left: 3px solid #FF6B1A; margin: 0.8em 0; padding: 4px 12px; color: rgba(10,10,10,0.6); font-style: italic; }
 
 /* Push notification toggle inside events-summary bar */
-/* Director Mode */
+/* Director Mode — amber accent distinguishes from the orange-toggled overlays */
 .director-btn.active {
-  border-color: #f59e0b;
-  color: #f59e0b;
+  border-color: var(--color-amber, #FFB347);
+  color: var(--color-amber, #FFB347);
 }
 
 .director-badge {
   margin-left: 4px;
-  padding: 1px 5px;
-  background: rgba(245, 158, 11, 0.15);
-  border-radius: 3px;
-  font-size: 10px;
-  color: #f59e0b;
+  padding: 1px 6px;
+  background: rgba(255, 179, 71, 0.18);
+  font-family: var(--font-mono, 'Space Mono', monospace);
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--color-amber, #FFB347);
 }
 
 .director-card {
@@ -2907,10 +3028,49 @@ onUnmounted(() => {
 }
 
 .director-event-card {
+  display: block;
+  width: 100%;
+  text-align: left;
   padding: 10px 12px;
   border: 1px solid rgba(245, 158, 11, 0.2);
   background: rgba(245, 158, 11, 0.04);
   margin-bottom: 6px;
+  font-family: inherit;
+  color: inherit;
+}
+
+.director-event-card-clickable {
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.director-event-card-clickable:hover {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.45);
+}
+
+.director-event-jump {
+  margin-left: 8px;
+  color: rgba(245, 158, 11, 0.55);
+  font-size: 11px;
+  transition: var(--transition-fast);
+}
+
+.director-event-card-clickable:hover .director-event-jump {
+  color: #f59e0b;
+  transform: translate(1px, -1px);
+}
+
+/* Flash the targeted timeline item when jumped to from the event list */
+@keyframes timeline-item-flash {
+  0%   { background: rgba(245, 158, 11, 0.35); }
+  60%  { background: rgba(245, 158, 11, 0.18); }
+  100% { background: transparent; }
+}
+
+.timeline-item-flash .timeline-card {
+  animation: timeline-item-flash 1.6s ease-out;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.5);
 }
 
 .director-event-card.pending {

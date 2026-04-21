@@ -6,14 +6,24 @@
         <span class="bd-icon">◎</span>
         <span class="bd-label">DRIFT</span>
       </div>
-      <button
-        class="bd-export-btn"
-        :disabled="!hasData"
-        @click="downloadPNG"
-        title="Download chart as PNG"
-      >
-        Export PNG ↓
-      </button>
+      <div class="bd-header-actions">
+        <button
+          class="bd-export-btn"
+          :disabled="!hasData || exporting || !copySupported"
+          :title="copySupported ? 'Copy chart as PNG (with MiroShark watermark)' : 'Image copy not supported in this browser'"
+          @click="copyChart"
+        >
+          {{ copiedFlash ? 'Copied' : 'Copy' }}
+        </button>
+        <button
+          class="bd-export-btn"
+          :disabled="!hasData || exporting"
+          @click="downloadChart"
+          title="Download chart as PNG (with MiroShark watermark)"
+        >
+          Download ↓
+        </button>
+      </div>
     </div>
 
     <!-- Legend -->
@@ -145,8 +155,15 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { getBeliefDrift } from '../api/simulation'
+import {
+  renderSvgToCanvas,
+  downloadCanvas,
+  copyCanvasToClipboard,
+  canCopyImageToClipboard,
+  buildTitledHeader,
+} from '../utils/chartExport'
 
 const props = defineProps({
   simulationId: { type: String, required: true },
@@ -158,6 +175,10 @@ const loading = ref(false)
 const error = ref('')
 const driftData = ref(null)
 const svgRef = ref(null)
+const exporting = ref(false)
+const copiedFlash = ref(false)
+let copiedFlashTimer = null
+const copySupported = canCopyImageToClipboard()
 
 // SVG dimensions and margins
 const W = 560
@@ -250,31 +271,76 @@ const load = async () => {
   }
 }
 
-const downloadPNG = () => {
-  const svg = svgRef.value
-  if (!svg) return
-  const serializer = new XMLSerializer()
-  const svgStr = serializer.serializeToString(svg)
-  const canvas = document.createElement('canvas')
-  canvas.width = W * 2
-  canvas.height = H * 2
-  const ctx = canvas.getContext('2d')
-  ctx.fillStyle = '#FAFAFA'
-  ctx.fillRect(0, 0, canvas.width, canvas.height)
-  const img = new Image()
-  img.onload = () => {
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-    const a = document.createElement('a')
-    a.download = `belief-drift-${props.simulationId}.png`
-    a.href = canvas.toDataURL('image/png')
-    a.click()
+// ── Chart export (copy + download, with MiroShark watermark) ──
+
+const _buildExportCanvas = () => {
+  if (!svgRef.value || !hasData.value) throw new Error('No chart to export')
+  const d = driftData.value || {}
+  const bullish = d.bullish || []
+  const bearish = d.bearish || []
+  const parts = []
+  if (bullish.length) parts.push(`${bullish[bullish.length - 1]}% bullish`)
+  if (bearish.length) parts.push(`${bearish[bearish.length - 1]}% bearish`)
+  const { drawHeader, headerHeight } = buildTitledHeader({
+    title: 'Belief drift — bullish / neutral / bearish',
+    subtitle: parts.length ? `Final: ${parts.join(' · ')}` : null,
+    width: W,
+  })
+  return renderSvgToCanvas(svgRef.value, {
+    width: W,
+    height: H,
+    scale: 2,
+    headerHeight,
+    drawHeader,
+    subtitle: `${props.simulationId} · ${new Date().toLocaleDateString()}`,
+  })
+}
+
+const _flashCopied = () => {
+  copiedFlash.value = true
+  if (copiedFlashTimer) clearTimeout(copiedFlashTimer)
+  copiedFlashTimer = setTimeout(() => { copiedFlash.value = false }, 1600)
+}
+
+async function copyChart() {
+  if (exporting.value || !hasData.value) return
+  exporting.value = true
+  try {
+    const canvas = await _buildExportCanvas()
+    await copyCanvasToClipboard(canvas)
+    _flashCopied()
+  } catch (err) {
+    console.warn('[drift] copy failed, falling back to download:', err)
+    try {
+      const canvas = await _buildExportCanvas()
+      downloadCanvas(canvas, `miroshark-drift-${props.simulationId}.png`)
+    } catch (err2) {
+      console.error('[drift] download fallback failed:', err2)
+    }
+  } finally {
+    exporting.value = false
   }
-  img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgStr)))
+}
+
+async function downloadChart() {
+  if (exporting.value || !hasData.value) return
+  exporting.value = true
+  try {
+    const canvas = await _buildExportCanvas()
+    downloadCanvas(canvas, `miroshark-drift-${props.simulationId}.png`)
+  } catch (err) {
+    console.error('[drift] download failed:', err)
+  } finally {
+    exporting.value = false
+  }
 }
 
 watch(() => props.visible, (val) => { if (val) load() })
 watch(() => props.simulationId, () => { if (props.visible) load() })
 onMounted(() => { if (props.visible) load() })
+onBeforeUnmount(() => {
+  if (copiedFlashTimer) clearTimeout(copiedFlashTimer)
+})
 </script>
 
 <style scoped>
@@ -315,6 +381,12 @@ onMounted(() => { if (props.visible) load() })
   color: rgba(10,10,10,0.5);
 }
 
+.bd-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .bd-export-btn {
   background: none;
   border: 1px solid rgba(10,10,10,0.15);
@@ -328,8 +400,8 @@ onMounted(() => { if (props.visible) load() })
 }
 
 .bd-export-btn:hover:not(:disabled) {
-  border-color: #14b8a6;
-  color: #14b8a6;
+  border-color: var(--color-orange);
+  color: var(--color-orange);
 }
 
 .bd-export-btn:disabled {

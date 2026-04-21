@@ -171,7 +171,11 @@ const submit = async () => {
 
 const openBranch = () => {
   if (!result.value?.simulation_id) return
-  router.push({ name: 'Process', params: { projectId: result.value.simulation_id } })
+  // Branch produces a READY simulation (profiles + config copied from parent).
+  // Jump straight into the running view — same treatment HistoryDatabase.vue
+  // gives a fresh fork. The previous 'Process' / projectId route landed the
+  // user on the project graph-build flow (step 2/4).
+  router.push({ name: 'SimulationRun', params: { simulationId: result.value.simulation_id } })
 }
 
 onMounted(() => {
@@ -183,90 +187,95 @@ onMounted(() => {
 </script>
 
 <style scoped>
+/* ── Container — mirrors .influence-leaderboard base (Space Mono, light bg) ── */
 .cf-panel {
-  background: #FAFAFA;
-  border: 2px solid rgba(10, 10, 10, 0.08);
-  padding: 20px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 0;
+  background: var(--background);
+  border: 1px solid rgba(10, 10, 10, 0.08);
+  font-family: var(--font-mono);
 }
 
+/* ── Header — mirrors .lb-header ── */
 .cf-header {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding-bottom: 10px;
+  gap: 6px;
+  padding: 12px 16px;
   border-bottom: 1px solid rgba(10, 10, 10, 0.08);
+  flex-shrink: 0;
 }
 
 .cf-title {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 2px;
 }
 
 .cf-icon {
-  color: #FF6B1A;
-  font-size: 16px;
+  font-size: 14px;
+  color: var(--color-orange);
 }
 
 .cf-label {
-  color: #0A0A0A;
+  font-size: 12px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: rgba(10, 10, 10, 0.5);
 }
 
 .cf-hint {
-  font-size: 12px;
-  color: rgba(10, 10, 10, 0.5);
+  font-size: 11px;
   line-height: 1.5;
+  color: rgba(10, 10, 10, 0.5);
+  letter-spacing: 0.3px;
 }
 
+/* ── Form rows ── */
 .cf-preset-row,
 .cf-form-row {
   display: flex;
   align-items: center;
   gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(10, 10, 10, 0.05);
 }
 
 .cf-form-row--stack {
   flex-direction: column;
   align-items: stretch;
-  gap: 4px;
+  gap: 6px;
 }
 
 .cf-preset-label,
 .cf-form-label {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  color: rgba(10, 10, 10, 0.5);
-  letter-spacing: 1px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 2px;
   text-transform: uppercase;
-  width: 130px;
+  color: rgba(10, 10, 10, 0.4);
+  width: 120px;
   flex-shrink: 0;
 }
 
 .cf-form-row--stack .cf-form-label {
   width: 100%;
-  margin-bottom: 2px;
 }
 
 .cf-preset-select,
 .cf-form-input,
 .cf-form-textarea {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 13px;
+  font-family: var(--font-mono);
+  font-size: 12px;
   padding: 6px 10px;
   border: 1px solid rgba(10, 10, 10, 0.12);
   background: #fff;
-  color: #0A0A0A;
+  color: var(--foreground);
   outline: none;
   flex: 1;
   min-width: 0;
+  transition: border-color 0.15s;
 }
 
 .cf-form-input--narrow {
@@ -277,121 +286,138 @@ onMounted(() => {
 .cf-form-textarea {
   min-height: 90px;
   resize: vertical;
-  line-height: 1.5;
-  font-family: var(--font-display);
-  font-size: 13px;
+  line-height: 1.55;
 }
 
 .cf-form-input:focus,
 .cf-form-textarea:focus,
 .cf-preset-select:focus {
-  border-color: #FF6B1A;
+  border-color: var(--color-orange);
 }
 
 .cf-form-meta {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: 10px;
   color: rgba(10, 10, 10, 0.4);
+  letter-spacing: 1px;
 }
 
 .cf-form-meta--right {
   text-align: right;
+  padding: 0 16px 10px;
 }
 
+/* ── Error / result states — mirrors .iv-error / .iv-answer ── */
 .cf-error {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  color: #CC0000;
-  background: rgba(204, 0, 0, 0.05);
-  padding: 6px 10px;
-  border-left: 2px solid #CC0000;
+  margin: 10px 16px 0;
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-red);
+  background: rgba(255, 68, 68, 0.06);
+  border-left: 2px solid var(--color-red);
+  letter-spacing: 0.3px;
 }
 
 .cf-result {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  color: #2d8a3f;
-  background: rgba(67, 193, 101, 0.06);
+  margin: 10px 16px 0;
   padding: 8px 10px;
-  border-left: 2px solid #2d8a3f;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: rgba(10, 10, 10, 0.8);
+  background: rgba(67, 193, 101, 0.06);
+  border-left: 2px solid var(--color-green);
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  letter-spacing: 0.3px;
 }
 
 .cf-result code {
   background: rgba(10, 10, 10, 0.04);
   padding: 1px 4px;
+  font-size: 10px;
+  color: var(--foreground);
 }
 
 .cf-open-btn {
   margin-left: auto;
-  background: #2d8a3f;
-  color: #fff;
-  border: none;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 4px 10px;
-  cursor: pointer;
+  background: none;
+  border: 1px solid var(--color-green);
+  color: var(--color-green);
+  font-family: var(--font-mono);
+  font-size: 10px;
   letter-spacing: 1px;
-}
-
-.cf-actions {
-  display: flex;
-  gap: 10px;
-  justify-content: flex-end;
-  margin-top: 4px;
-}
-
-.cf-cancel,
-.cf-submit {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 8px 16px;
+  padding: 3px 10px;
   cursor: pointer;
-  letter-spacing: 1px;
   text-transform: uppercase;
   transition: all 0.15s;
 }
 
+.cf-open-btn:hover {
+  background: var(--color-green);
+  color: var(--color-white);
+}
+
+/* ── Actions row — matches the Step3 action-btn language ── */
+.cf-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 12px 16px;
+  border-top: 1px solid rgba(10, 10, 10, 0.05);
+}
+
+.cf-cancel,
+.cf-submit {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  padding: 8px 16px;
+  border: 2px solid rgba(10, 10, 10, 0.12);
+  cursor: pointer;
+  transition: all 0.1s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .cf-cancel {
   background: transparent;
-  border: 1px solid rgba(10, 10, 10, 0.15);
-  color: rgba(10, 10, 10, 0.7);
+  color: rgba(10, 10, 10, 0.4);
 }
 
 .cf-cancel:hover:not(:disabled) {
-  border-color: rgba(10, 10, 10, 0.35);
+  border-color: rgba(10, 10, 10, 0.3);
+  color: rgba(10, 10, 10, 0.7);
 }
 
 .cf-submit {
-  background: #0A0A0A;
-  color: #fff;
-  border: 1px solid #0A0A0A;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+  background: var(--color-black);
+  color: var(--color-white);
+  border-color: var(--color-black);
 }
 
 .cf-submit:hover:not(:disabled) {
-  background: #FF6B1A;
-  border-color: #FF6B1A;
+  opacity: 0.9;
 }
 
 .cf-submit:disabled,
 .cf-cancel:disabled {
-  opacity: 0.4;
+  opacity: 0.3;
   cursor: not-allowed;
 }
 
+/* ── Spinner — dark-track on black submit, light track on cancel ── */
 .cf-spinner {
   width: 10px;
   height: 10px;
   border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: #fff;
+  border-top-color: var(--color-orange);
   border-radius: 50%;
   animation: cf-spin 0.8s linear infinite;
 }

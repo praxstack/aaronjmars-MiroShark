@@ -6,14 +6,24 @@
         <span class="wi-icon">◐</span>
         <span class="wi-label">WHAT IF? — COUNTERFACTUAL</span>
       </div>
-      <button
-        class="wi-export-btn"
-        :disabled="!hasChartData"
-        @click="downloadPNG"
-        title="Download chart as PNG"
-      >
-        Export PNG ↓
-      </button>
+      <div class="wi-header-actions">
+        <button
+          class="wi-export-btn"
+          :disabled="!hasChartData || exporting || !copySupported"
+          :title="copySupported ? 'Copy chart as PNG (with MiroShark watermark)' : 'Image copy not supported in this browser'"
+          @click="copyChart"
+        >
+          {{ copiedFlash ? 'Copied' : 'Copy' }}
+        </button>
+        <button
+          class="wi-export-btn"
+          :disabled="!hasChartData || exporting"
+          @click="downloadChart"
+          title="Download chart as PNG (with MiroShark watermark)"
+        >
+          Download ↓
+        </button>
+      </div>
     </div>
 
     <div class="wi-hint">
@@ -100,7 +110,7 @@
               <text
                 :x="ML - 5" :y="yS(pct) + 4"
                 fill="rgba(10,10,10,0.35)" font-size="9"
-                font-family="monospace" text-anchor="end"
+                font-family="'Space Mono', monospace" text-anchor="end"
               >{{ pct }}%</text>
             </g>
 
@@ -112,20 +122,20 @@
               stroke-dasharray="2,3"
             />
 
-            <!-- Original bullish curve (muted, dashed) -->
+            <!-- Original bullish curve (muted gray, dashed) -->
             <path
               :d="originalPath"
               fill="none"
-              stroke="rgba(20,184,166,0.55)"
+              stroke="rgba(10,10,10,0.35)"
               stroke-width="1.5"
               stroke-dasharray="5,3"
             />
 
-            <!-- Counterfactual bullish curve (solid, highlighted) -->
+            <!-- Counterfactual bullish curve (orange, solid highlight) -->
             <path
               :d="counterfactualPath"
               fill="none"
-              stroke="rgba(20,184,166,1)"
+              stroke="#FF6B1A"
               stroke-width="2.2"
             />
 
@@ -134,39 +144,41 @@
               v-if="origEnd"
               :cx="origEnd.x" :cy="origEnd.y"
               r="3"
-              fill="rgba(20,184,166,0.55)"
+              fill="rgba(10,10,10,0.35)"
             />
             <circle
               v-if="cfEnd"
               :cx="cfEnd.x" :cy="cfEnd.y"
               r="4"
-              fill="rgba(20,184,166,1)"
+              fill="#FF6B1A"
               stroke="#FAFAFA" stroke-width="1.5"
             />
 
-            <!-- Consensus markers -->
+            <!-- Consensus markers — orig in gray, cf in green (design bicolor) -->
             <g v-if="origData?.consensus_round != null">
               <line
                 :x1="xS(origData.consensus_round)" :y1="MT"
                 :x2="xS(origData.consensus_round)" :y2="H - MB"
-                stroke="rgba(10,10,10,0.4)" stroke-width="1"
+                stroke="rgba(10,10,10,0.3)" stroke-width="1"
                 stroke-dasharray="3,3"
               />
               <text
                 :x="xS(origData.consensus_round) + 4" :y="MT + 10"
-                fill="rgba(10,10,10,0.5)" font-size="9" font-family="monospace"
+                fill="rgba(10,10,10,0.45)" font-size="9"
+                font-family="'Space Mono', monospace"
               >orig r{{ origData.consensus_round }}</text>
             </g>
             <g v-if="cfData?.consensus_round != null && cfData.consensus_round !== origData?.consensus_round">
               <line
                 :x1="xS(cfData.consensus_round)" :y1="MT"
                 :x2="xS(cfData.consensus_round)" :y2="H - MB"
-                stroke="rgba(245,158,11,0.7)" stroke-width="1.2"
+                stroke="#43C165" stroke-width="1.2"
                 stroke-dasharray="3,3"
               />
               <text
                 :x="xS(cfData.consensus_round) + 4" :y="MT + 22"
-                fill="rgba(245,158,11,0.85)" font-size="9" font-family="monospace"
+                fill="#43C165" font-size="9"
+                font-family="'Space Mono', monospace"
               >cf r{{ cfData.consensus_round }}</text>
             </g>
 
@@ -176,12 +188,12 @@
               :key="'xt' + r"
               :x="xS(r)" :y="H - MB + 13"
               fill="rgba(10,10,10,0.35)" font-size="9"
-              font-family="monospace" text-anchor="middle"
+              font-family="'Space Mono', monospace" text-anchor="middle"
             >{{ r }}</text>
             <text
               :x="ML + (W - ML - MR) / 2" :y="H - 2"
               fill="rgba(10,10,10,0.3)" font-size="9"
-              font-family="monospace" text-anchor="middle"
+              font-family="'Space Mono', monospace" text-anchor="middle"
             >Round — bullish %</text>
           </svg>
 
@@ -244,8 +256,15 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { getInfluenceLeaderboard, getCounterfactualDrift } from '../api/simulation'
+import {
+  renderSvgToCanvas,
+  downloadCanvas,
+  copyCanvasToClipboard,
+  canCopyImageToClipboard,
+  buildTitledHeader,
+} from '../utils/chartExport'
 
 const props = defineProps({
   simulationId: { type: String, required: true },
@@ -264,6 +283,10 @@ const result = ref(null)
 const computing = ref(false)
 const error = ref('')
 const svgRef = ref(null)
+const exporting = ref(false)
+const copiedFlash = ref(false)
+let copiedFlashTimer = null
+const copySupported = canCopyImageToClipboard()
 
 // SVG dimensions
 const W = 560
@@ -411,26 +434,70 @@ const compute = async () => {
   }
 }
 
-const downloadPNG = () => {
-  const svg = svgRef.value
-  if (!svg) return
-  const serializer = new XMLSerializer()
-  const svgStr = serializer.serializeToString(svg)
-  const canvas = document.createElement('canvas')
-  canvas.width = W * 2
-  canvas.height = H * 2
-  const ctx = canvas.getContext('2d')
-  ctx.fillStyle = '#FAFAFA'
-  ctx.fillRect(0, 0, canvas.width, canvas.height)
-  const img = new Image()
-  img.onload = () => {
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-    const a = document.createElement('a')
-    a.download = `counterfactual-${props.simulationId}.png`
-    a.href = canvas.toDataURL('image/png')
-    a.click()
+// ── Chart export (copy + download as PNG, with MiroShark watermark) ──
+
+const _buildExportCanvas = () => {
+  if (!svgRef.value || !hasChartData.value) {
+    throw new Error('No chart to export')
   }
-  img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgStr)))
+  const removed = selectedNames.value.length
+    ? `Removed ${selectedNames.value.join(', ')}`
+    : 'Counterfactual drift'
+  const deltaStr = result.value?.delta_final_bullish != null
+    ? `${result.value.delta_final_bullish >= 0 ? '+' : ''}${result.value.delta_final_bullish} pts on bullish share`
+    : null
+  const { drawHeader, headerHeight } = buildTitledHeader({
+    title: `What If? — ${removed}`,
+    subtitle: deltaStr,
+    width: W,
+  })
+  return renderSvgToCanvas(svgRef.value, {
+    width: W,
+    height: H,
+    scale: 2,
+    headerHeight,
+    drawHeader,
+    subtitle: `${props.simulationId} · ${new Date().toLocaleDateString()}`,
+  })
+}
+
+const _flashCopied = () => {
+  copiedFlash.value = true
+  if (copiedFlashTimer) clearTimeout(copiedFlashTimer)
+  copiedFlashTimer = setTimeout(() => { copiedFlash.value = false }, 1600)
+}
+
+async function copyChart() {
+  if (exporting.value || !hasChartData.value) return
+  exporting.value = true
+  try {
+    const canvas = await _buildExportCanvas()
+    await copyCanvasToClipboard(canvas)
+    _flashCopied()
+  } catch (err) {
+    console.warn('[what-if] copy failed, falling back to download:', err)
+    try {
+      const canvas = await _buildExportCanvas()
+      downloadCanvas(canvas, `miroshark-whatif-${props.simulationId}.png`)
+    } catch (err2) {
+      console.error('[what-if] download fallback failed:', err2)
+    }
+  } finally {
+    exporting.value = false
+  }
+}
+
+async function downloadChart() {
+  if (exporting.value || !hasChartData.value) return
+  exporting.value = true
+  try {
+    const canvas = await _buildExportCanvas()
+    downloadCanvas(canvas, `miroshark-whatif-${props.simulationId}.png`)
+  } catch (err) {
+    console.error('[what-if] download failed:', err)
+  } finally {
+    exporting.value = false
+  }
 }
 
 watch(() => props.visible, (val) => {
@@ -445,9 +512,13 @@ watch(() => props.simulationId, () => {
   }
 })
 onMounted(() => { if (props.visible) loadAgents() })
+onBeforeUnmount(() => {
+  if (copiedFlashTimer) clearTimeout(copiedFlashTimer)
+})
 </script>
 
 <style scoped>
+/* ── Container — mirrors .influence-leaderboard (Space Mono, light bg) ── */
 .what-if {
   display: flex;
   flex-direction: column;
@@ -457,6 +528,7 @@ onMounted(() => { if (props.visible) loadAgents() })
   background: var(--background);
 }
 
+/* ── Header — mirrors .lb-header ── */
 .wi-header {
   display: flex;
   justify-content: space-between;
@@ -470,58 +542,79 @@ onMounted(() => { if (props.visible) loadAgents() })
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  color: rgba(10,10,10,0.75);
 }
 
-.wi-icon { font-size: 14px; color: rgba(20,184,166,0.9); }
+.wi-icon {
+  font-size: 14px;
+  color: var(--color-orange);
+}
 
+.wi-label {
+  font-size: 12px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: rgba(10,10,10,0.5);
+}
+
+/* Header action cluster */
+.wi-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Export button — mirrors .export-btn ── */
 .wi-export-btn {
-  background: transparent;
+  background: none;
   border: 1px solid rgba(10,10,10,0.15);
-  color: rgba(10,10,10,0.6);
+  color: rgba(10,10,10,0.5);
   padding: 4px 10px;
-  font-family: inherit;
-  font-size: 10px;
-  letter-spacing: 0.05em;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 1px;
   cursor: pointer;
-  border-radius: 2px;
+  transition: all 0.15s ease;
 }
 .wi-export-btn:hover:not(:disabled) {
-  background: rgba(10,10,10,0.04);
-  color: rgba(10,10,10,0.85);
+  border-color: var(--color-orange);
+  color: var(--color-orange);
 }
-.wi-export-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.wi-export-btn:disabled { opacity: 0.3; cursor: not-allowed; }
 
 .wi-hint {
   padding: 8px 16px;
   font-size: 11px;
-  line-height: 1.4;
-  color: rgba(10,10,10,0.55);
+  line-height: 1.5;
+  color: rgba(10,10,10,0.5);
   border-bottom: 1px solid rgba(10,10,10,0.05);
+  letter-spacing: 0.3px;
 }
 
+/* ── States — mirrors .lb-loading / .lb-empty / .lb-error ── */
 .wi-state {
-  padding: 24px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 40px;
   text-align: center;
-  color: rgba(10,10,10,0.55);
-  font-size: 11px;
+  color: rgba(10,10,10,0.35);
+  font-size: 13px;
+  letter-spacing: 1px;
 }
-.wi-state.wi-error { color: rgba(239,68,68,0.9); }
+.wi-state.wi-error { color: var(--color-red); }
 
 .pulse-ring {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--color-orange);
   border-radius: 50%;
-  background: rgba(20,184,166,0.8);
-  margin-right: 8px;
-  animation: wi-pulse 1.4s ease-in-out infinite;
+  animation: wi-pulse 1.2s ease-in-out infinite;
 }
 @keyframes wi-pulse {
-  0%, 100% { opacity: 0.4; transform: scale(0.85); }
-  50% { opacity: 1; transform: scale(1.1); }
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.4); opacity: 0.4; }
 }
 
 .wi-picker {
@@ -533,23 +626,26 @@ onMounted(() => { if (props.visible) loadAgents() })
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 .wi-picker-title {
   font-size: 10px;
-  letter-spacing: 0.1em;
-  color: rgba(10,10,10,0.5);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: rgba(10,10,10,0.4);
 }
 .wi-clear {
-  background: transparent;
+  background: none;
   border: none;
-  font-family: inherit;
+  font-family: var(--font-mono);
   font-size: 10px;
-  color: rgba(10,10,10,0.55);
+  letter-spacing: 1px;
+  color: rgba(10,10,10,0.5);
   cursor: pointer;
   padding: 2px 6px;
+  transition: color 0.15s;
 }
-.wi-clear:hover { color: rgba(10,10,10,0.9); text-decoration: underline; }
+.wi-clear:hover { color: var(--color-orange); }
 
 .wi-agent-grid {
   display: grid;
@@ -557,87 +653,94 @@ onMounted(() => { if (props.visible) loadAgents() })
   gap: 6px;
 }
 
+/* ── Agent card — same hover/selected pattern as the leaderboard's top-three
+   accent (orange left-border, no radius), keeps the row-like feel ── */
 .wi-agent-card {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
+  padding: 8px 10px;
   border: 1px solid rgba(10,10,10,0.12);
-  border-radius: 2px;
   cursor: pointer;
   font-size: 11px;
-  color: rgba(10,10,10,0.8);
+  color: rgba(10,10,10,0.7);
   transition: background-color 0.12s, border-color 0.12s;
 }
 .wi-agent-card:hover:not(.disabled) {
-  background: rgba(20,184,166,0.06);
-  border-color: rgba(20,184,166,0.4);
+  background: rgba(10,10,10,0.02);
+  border-color: rgba(255, 107, 26, 0.35);
 }
 .wi-agent-card.selected {
-  background: rgba(20,184,166,0.1);
-  border-color: rgba(20,184,166,0.7);
+  background: rgba(255, 107, 26, 0.06);
+  border-color: var(--color-orange);
+  color: var(--foreground);
 }
 .wi-agent-card.disabled {
-  opacity: 0.4;
+  opacity: 0.3;
   cursor: not-allowed;
 }
 
-.wi-check { margin: 0; cursor: inherit; }
+.wi-check { margin: 0; cursor: inherit; accent-color: var(--color-orange); }
 
 .wi-rank {
   font-size: 10px;
-  color: rgba(10,10,10,0.45);
+  color: rgba(10,10,10,0.4);
   min-width: 24px;
+  font-weight: 700;
 }
 .wi-agent-name {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 700;
 }
 .wi-agent-score {
   font-size: 10px;
-  color: rgba(10,10,10,0.5);
+  color: var(--color-orange);
+  font-weight: 700;
 }
 
 .wi-actions {
-  margin-top: 10px;
+  margin-top: 12px;
   display: flex;
   justify-content: flex-end;
 }
 
+/* ── Recompute — primary CTA, matches .action-btn.primary (black filled) ── */
 .wi-recompute {
-  background: rgba(20,184,166,1);
-  color: #fff;
-  border: none;
-  padding: 6px 14px;
-  font-family: inherit;
+  background: var(--color-black);
+  color: var(--color-white);
+  border: 2px solid var(--color-black);
+  padding: 8px 16px;
+  font-family: var(--font-mono);
   font-size: 11px;
-  letter-spacing: 0.05em;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
   cursor: pointer;
-  border-radius: 2px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  transition: opacity 0.15s ease;
 }
-.wi-recompute:hover:not(:disabled) { background: rgba(17,164,148,1); }
+.wi-recompute:hover:not(:disabled) { opacity: 0.9; }
 .wi-recompute:disabled {
-  background: rgba(10,10,10,0.15);
+  opacity: 0.3;
   cursor: not-allowed;
 }
 
 .wi-spinner {
   width: 10px;
   height: 10px;
-  border: 2px solid rgba(255,255,255,0.35);
-  border-top-color: #fff;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: var(--color-orange);
   border-radius: 50%;
   animation: wi-spin 0.8s linear infinite;
 }
 @keyframes wi-spin { to { transform: rotate(360deg); } }
 
 .wi-result {
-  padding: 10px 16px 16px;
+  padding: 12px 16px 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -645,8 +748,8 @@ onMounted(() => { if (props.visible) loadAgents() })
 
 .wi-chart-wrap {
   background: rgba(10,10,10,0.02);
+  border: 1px solid rgba(10,10,10,0.06);
   padding: 10px 6px 4px;
-  border-radius: 2px;
 }
 
 .wi-svg { width: 100%; height: auto; display: block; }
@@ -656,7 +759,8 @@ onMounted(() => { if (props.visible) loadAgents() })
   gap: 16px;
   padding: 6px 8px 0;
   font-size: 10px;
-  color: rgba(10,10,10,0.6);
+  letter-spacing: 1px;
+  color: rgba(10,10,10,0.5);
 }
 .wi-legend-item { display: inline-flex; align-items: center; gap: 6px; }
 .wi-legend-swatch {
@@ -664,28 +768,29 @@ onMounted(() => { if (props.visible) loadAgents() })
   height: 2px;
   display: inline-block;
 }
+/* ── Chart strokes — orange bicolor palette (dashed = original, solid = cf) ── */
 .wi-legend-swatch.orig {
   background: repeating-linear-gradient(
     90deg,
-    rgba(20,184,166,0.55) 0,
-    rgba(20,184,166,0.55) 4px,
+    rgba(10, 10, 10, 0.35) 0,
+    rgba(10, 10, 10, 0.35) 4px,
     transparent 4px,
     transparent 7px
   );
 }
 .wi-legend-swatch.cf {
-  background: rgba(20,184,166,1);
+  background: var(--color-orange);
   height: 3px;
 }
 
+/* ── Impact panel — light card with subtle border, matches .lb footer feel ── */
 .wi-impact {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px;
+  gap: 8px;
+  padding: 12px 14px;
   border: 1px solid rgba(10,10,10,0.08);
-  border-radius: 2px;
-  background: rgba(10,10,10,0.02);
+  background: var(--color-white);
 }
 
 .wi-impact-row {
@@ -696,66 +801,81 @@ onMounted(() => { if (props.visible) loadAgents() })
   gap: 12px;
 }
 .wi-impact-label {
-  color: rgba(10,10,10,0.55);
-  letter-spacing: 0.04em;
+  color: rgba(10,10,10,0.4);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  font-size: 10px;
 }
 .wi-impact-values {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-family: monospace;
+  font-family: var(--font-mono);
 }
-.wi-val.orig { color: rgba(10,10,10,0.55); }
-.wi-val.cf { color: rgba(10,10,10,0.9); font-weight: 600; }
+.wi-val.orig { color: rgba(10,10,10,0.5); }
+.wi-val.cf { color: var(--foreground); font-weight: 700; }
 .wi-arrow { color: rgba(10,10,10,0.3); }
 
+/* ── Delta pill — orange = positive shift, red = negative, neutral gray ── */
 .wi-delta {
   padding: 1px 6px;
-  border-radius: 2px;
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
+  letter-spacing: 0.5px;
   border: 1px solid transparent;
 }
-.wi-delta.positive { color: rgba(20,184,166,1); border-color: rgba(20,184,166,0.35); }
-.wi-delta.negative { color: rgba(239,68,68,0.9); border-color: rgba(239,68,68,0.35); }
-.wi-delta.neutral  { color: rgba(10,10,10,0.5); border-color: rgba(10,10,10,0.15); }
+.wi-delta.positive {
+  color: var(--color-orange);
+  border-color: rgba(255, 107, 26, 0.35);
+}
+.wi-delta.negative {
+  color: var(--color-red);
+  border-color: rgba(255, 68, 68, 0.35);
+}
+.wi-delta.neutral {
+  color: rgba(10,10,10,0.4);
+  border-color: rgba(10,10,10,0.12);
+}
 
 .wi-impact-badge-row { margin-top: 4px; }
 .wi-impact-badge {
   display: inline-block;
-  padding: 3px 8px;
+  padding: 3px 10px;
   font-size: 10px;
-  letter-spacing: 0.08em;
-  border-radius: 2px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
   border: 1px solid transparent;
 }
 .wi-impact-badge.impact-strong {
-  color: rgba(20,184,166,1);
-  background: rgba(20,184,166,0.08);
-  border-color: rgba(20,184,166,0.4);
+  color: var(--color-orange);
+  background: rgba(255, 107, 26, 0.08);
+  border-color: rgba(255, 107, 26, 0.4);
 }
 .wi-impact-badge.impact-moderate {
-  color: rgba(234,179,8,1);
-  background: rgba(234,179,8,0.08);
-  border-color: rgba(234,179,8,0.4);
+  color: var(--color-amber);
+  background: rgba(255, 179, 71, 0.1);
+  border-color: rgba(255, 179, 71, 0.45);
 }
 .wi-impact-badge.impact-minimal {
-  color: rgba(10,10,10,0.5);
+  color: rgba(10,10,10,0.45);
   background: rgba(10,10,10,0.04);
-  border-color: rgba(10,10,10,0.15);
+  border-color: rgba(10,10,10,0.12);
 }
 
 .wi-summary {
   font-size: 11px;
-  line-height: 1.5;
+  line-height: 1.55;
   color: rgba(10,10,10,0.75);
-  padding-top: 4px;
+  padding-top: 8px;
   border-top: 1px solid rgba(10,10,10,0.06);
+  letter-spacing: 0.2px;
 }
 
 .wi-warn {
   font-size: 10px;
-  color: rgba(234,88,12,0.85);
+  color: var(--color-orange);
   padding-top: 2px;
+  letter-spacing: 1px;
 }
 </style>
