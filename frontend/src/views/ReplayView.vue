@@ -252,6 +252,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getRunStatusDetail } from '../api/simulation'
+import { truncate } from '../utils/text'
 
 const route = useRoute()
 const router = useRouter()
@@ -438,11 +439,6 @@ const getActionTypeClass = (type) => {
     'VIEW_PORTFOLIO': 'badge-meta', 'COMMENT_ON_MARKET': 'badge-comment',
   }
   return classes[type] || 'badge-default'
-}
-
-const truncate = (content, max = 100) => {
-  if (!content) return ''
-  return content.length > max ? content.substring(0, max) + '...' : content
 }
 
 const formatTime = (timestamp) => {

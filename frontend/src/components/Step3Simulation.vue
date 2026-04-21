@@ -721,6 +721,7 @@ import {
 } from '../api/simulation'
 import { generateReport } from '../api/report'
 import { renderMarkdown } from '../utils/markdown'
+import { truncate as truncateContent } from '../utils/text'
 import InfluenceLeaderboard from './InfluenceLeaderboard.vue'
 import BeliefDriftChart from './BeliefDriftChart.vue'
 import InteractionNetwork from './InteractionNetwork.vue'
@@ -1332,12 +1333,6 @@ const formatShares = (n) => {
 const formatPrice = (n) => {
   if (n == null) return '?'
   return Number(n).toFixed(2)
-}
-
-const truncateContent = (content, maxLength = 100) => {
-  if (!content) return ''
-  if (content.length > maxLength) return content.substring(0, maxLength) + '...'
-  return content
 }
 
 const formatActionTime = (timestamp) => {

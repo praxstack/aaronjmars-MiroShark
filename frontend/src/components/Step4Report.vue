@@ -415,6 +415,7 @@ import { useRouter } from 'vue-router'
 import { getAgentLog, getConsoleLog } from '../api/report'
 import { exportSimulationData } from '../api/simulation'
 import { renderMarkdown } from '../utils/markdown'
+import { truncate as truncateText } from '../utils/text'
 
 const router = useRouter()
 
@@ -1908,12 +1909,6 @@ const formatResultSize = (length) => {
   if (!length) return ''
   if (length < 1000) return `${length} chars`
   return `${(length / 1000).toFixed(1)}k chars`
-}
-
-const truncateText = (text, maxLen) => {
-  if (!text) return ''
-  if (text.length <= maxLen) return text
-  return text.substring(0, maxLen) + '...'
 }
 
 const getTimelineItemClass = (log, idx, total) => {

@@ -474,6 +474,7 @@
 import { ref, computed, onMounted, onUnmounted, onActivated, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { getSimulationHistory, forkSimulation, resolveSimulation, getSimulationQuality } from '../api/simulation'
+import { truncate as truncateText } from '../utils/text'
 import EmbedDialog from './EmbedDialog.vue'
 
 const router = useRouter()
@@ -742,12 +743,6 @@ const formatTime = (dateStr) => {
   } catch {
     return ''
   }
-}
-
-// Truncate text
-const truncateText = (text, maxLength) => {
-  if (!text) return ''
-  return text.length > maxLength ? text.slice(0, maxLength) + '...' : text
 }
 
 // Generate title from simulation requirement (first 20 chars)

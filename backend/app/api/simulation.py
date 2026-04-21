@@ -112,6 +112,77 @@ def optimize_interview_prompt(prompt: str) -> str:
     return f"{INTERVIEW_PROMPT_PREFIX}{prompt}"
 
 
+# ============== Shared in-memory rate limit + LRU helpers ==============
+#
+# Three endpoints (scenario-suggest, ask, trending) each need a per-IP sliding
+# window rate limiter, and two need a bounded LRU cache. The helpers below
+# centralize that logic so each endpoint only needs its own config constants.
+
+
+def _client_ip() -> str:
+    """Resolve the client IP for rate-limit keying, tolerating proxies."""
+    return (
+        request.headers.get('X-Forwarded-For', '').split(',')[0].strip()
+        or request.remote_addr
+        or 'unknown'
+    )
+
+
+def _sliding_window_rate_limited(
+    hits: "dict[str, list[float]]",
+    client_ip: str,
+    *,
+    window_sec: float,
+    max_calls: int,
+) -> bool:
+    """Sliding-window per-IP rate limit. Mutates ``hits`` in place.
+
+    Returns True when ``client_ip`` has already exceeded ``max_calls`` within
+    the last ``window_sec`` seconds. Opportunistically GCs stale buckets when
+    the dict grows above 1024 entries.
+    """
+    import time
+    now = time.monotonic()
+    cutoff = now - window_sec
+    bucket = [t for t in hits.get(client_ip, []) if t > cutoff]
+    if len(bucket) >= max_calls:
+        hits[client_ip] = bucket
+        return True
+    bucket.append(now)
+    hits[client_ip] = bucket
+    if len(hits) > 1024:
+        for ip in list(hits.keys()):
+            if not hits[ip] or hits[ip][-1] < cutoff:
+                hits.pop(ip, None)
+    return False
+
+
+def _lru_get(cache: dict, order: list, key: str):
+    """LRU read: returns the entry (or None) and promotes it to most-recent."""
+    entry = cache.get(key)
+    if entry is None:
+        return None
+    try:
+        order.remove(key)
+    except ValueError:
+        pass
+    order.append(key)
+    return entry
+
+
+def _lru_put(cache: dict, order: list, key: str, value, *, max_size: int) -> None:
+    """LRU write with bounded size; evicts least-recent entries when full."""
+    if key in cache:
+        try:
+            order.remove(key)
+        except ValueError:
+            pass
+    cache[key] = value
+    order.append(key)
+    while len(order) > max_size:
+        cache.pop(order.pop(0), None)
+
+
 # ============== Scenario Auto-Suggest ==============
 
 # In-memory LRU-style cache for scenario suggestions.
@@ -160,47 +231,26 @@ def _normalize_preview(text: str) -> str:
 
 def _scenario_rate_limited(client_ip: str) -> bool:
     """Return True if this IP has exceeded the per-window call budget."""
-    import time
-    now = time.monotonic()
-    cutoff = now - _SCENARIO_RATE_WINDOW_SEC
-    hits = _SCENARIO_RATE_HITS.get(client_ip, [])
-    hits = [t for t in hits if t > cutoff]
-    if len(hits) >= _SCENARIO_RATE_MAX_CALLS:
-        _SCENARIO_RATE_HITS[client_ip] = hits
-        return True
-    hits.append(now)
-    _SCENARIO_RATE_HITS[client_ip] = hits
-    # Opportunistic GC so the dict doesn't grow unbounded across distinct IPs.
-    if len(_SCENARIO_RATE_HITS) > 1024:
-        for ip in list(_SCENARIO_RATE_HITS.keys()):
-            if not _SCENARIO_RATE_HITS[ip] or _SCENARIO_RATE_HITS[ip][-1] < cutoff:
-                _SCENARIO_RATE_HITS.pop(ip, None)
-    return False
+    return _sliding_window_rate_limited(
+        _SCENARIO_RATE_HITS,
+        client_ip,
+        window_sec=_SCENARIO_RATE_WINDOW_SEC,
+        max_calls=_SCENARIO_RATE_MAX_CALLS,
+    )
 
 
 def _scenario_cache_get(key: str):
-    entry = _SCENARIO_SUGGEST_CACHE.get(key)
-    if entry is None:
-        return None
-    try:
-        _SCENARIO_SUGGEST_CACHE_ORDER.remove(key)
-    except ValueError:
-        pass
-    _SCENARIO_SUGGEST_CACHE_ORDER.append(key)
-    return entry
+    return _lru_get(_SCENARIO_SUGGEST_CACHE, _SCENARIO_SUGGEST_CACHE_ORDER, key)
 
 
 def _scenario_cache_put(key: str, value: dict) -> None:
-    if key in _SCENARIO_SUGGEST_CACHE:
-        try:
-            _SCENARIO_SUGGEST_CACHE_ORDER.remove(key)
-        except ValueError:
-            pass
-    _SCENARIO_SUGGEST_CACHE[key] = value
-    _SCENARIO_SUGGEST_CACHE_ORDER.append(key)
-    while len(_SCENARIO_SUGGEST_CACHE_ORDER) > _SCENARIO_SUGGEST_CACHE_MAX:
-        oldest = _SCENARIO_SUGGEST_CACHE_ORDER.pop(0)
-        _SCENARIO_SUGGEST_CACHE.pop(oldest, None)
+    _lru_put(
+        _SCENARIO_SUGGEST_CACHE,
+        _SCENARIO_SUGGEST_CACHE_ORDER,
+        key,
+        value,
+        max_size=_SCENARIO_SUGGEST_CACHE_MAX,
+    )
 
 
 _VALID_SCENARIO_LABELS = ("Bull", "Bear", "Neutral")
@@ -289,11 +339,7 @@ def suggest_scenarios():
         }
     """
     try:
-        client_ip = (
-            request.headers.get('X-Forwarded-For', '').split(',')[0].strip()
-            or request.remote_addr
-            or 'unknown'
-        )
+        client_ip = _client_ip()
         if _scenario_rate_limited(client_ip):
             return jsonify({
                 "success": True,
@@ -421,44 +467,20 @@ _ASK_SYSTEM_PROMPT = (
 
 
 def _ask_rate_limited(client_ip: str) -> bool:
-    import time
-    now = time.monotonic()
-    cutoff = now - _ASK_RATE_WINDOW_SEC
-    hits = [t for t in _ASK_RATE_HITS.get(client_ip, []) if t > cutoff]
-    if len(hits) >= _ASK_RATE_MAX_CALLS:
-        _ASK_RATE_HITS[client_ip] = hits
-        return True
-    hits.append(now)
-    _ASK_RATE_HITS[client_ip] = hits
-    if len(_ASK_RATE_HITS) > 1024:
-        for ip in list(_ASK_RATE_HITS.keys()):
-            if not _ASK_RATE_HITS[ip] or _ASK_RATE_HITS[ip][-1] < cutoff:
-                _ASK_RATE_HITS.pop(ip, None)
-    return False
+    return _sliding_window_rate_limited(
+        _ASK_RATE_HITS,
+        client_ip,
+        window_sec=_ASK_RATE_WINDOW_SEC,
+        max_calls=_ASK_RATE_MAX_CALLS,
+    )
 
 
 def _ask_cache_get(key: str):
-    entry = _ASK_CACHE.get(key)
-    if entry is None:
-        return None
-    try:
-        _ASK_CACHE_ORDER.remove(key)
-    except ValueError:
-        pass
-    _ASK_CACHE_ORDER.append(key)
-    return entry
+    return _lru_get(_ASK_CACHE, _ASK_CACHE_ORDER, key)
 
 
 def _ask_cache_put(key: str, value: dict) -> None:
-    if key in _ASK_CACHE:
-        try:
-            _ASK_CACHE_ORDER.remove(key)
-        except ValueError:
-            pass
-    _ASK_CACHE[key] = value
-    _ASK_CACHE_ORDER.append(key)
-    while len(_ASK_CACHE_ORDER) > _ASK_CACHE_MAX:
-        _ASK_CACHE.pop(_ASK_CACHE_ORDER.pop(0), None)
+    _lru_put(_ASK_CACHE, _ASK_CACHE_ORDER, key, value, max_size=_ASK_CACHE_MAX)
 
 
 _ASK_ALLOWED_PLATFORMS = {"twitter", "reddit", "polymarket"}
@@ -521,11 +543,7 @@ def ask_mode():
     key_actors, suggested_platforms, model, cached}}``.
     """
     try:
-        client_ip = (
-            request.headers.get('X-Forwarded-For', '').split(',')[0].strip()
-            or request.remote_addr
-            or 'unknown'
-        )
+        client_ip = _client_ip()
         if _ask_rate_limited(client_ip):
             return jsonify({
                 "success": False,
@@ -685,21 +703,12 @@ def _trending_url_allowed(url: str) -> bool:
 
 def _trending_rate_limited(client_ip: str) -> bool:
     """Sliding-window per-IP rate limit, mirroring scenario-suggest's pattern."""
-    import time
-    now = time.monotonic()
-    cutoff = now - _TRENDING_RATE_WINDOW_SEC
-    hits = _TRENDING_RATE_HITS.get(client_ip, [])
-    hits = [t for t in hits if t > cutoff]
-    if len(hits) >= _TRENDING_RATE_MAX_CALLS:
-        _TRENDING_RATE_HITS[client_ip] = hits
-        return True
-    hits.append(now)
-    _TRENDING_RATE_HITS[client_ip] = hits
-    if len(_TRENDING_RATE_HITS) > 1024:
-        for ip in list(_TRENDING_RATE_HITS.keys()):
-            if not _TRENDING_RATE_HITS[ip] or _TRENDING_RATE_HITS[ip][-1] < cutoff:
-                _TRENDING_RATE_HITS.pop(ip, None)
-    return False
+    return _sliding_window_rate_limited(
+        _TRENDING_RATE_HITS,
+        client_ip,
+        window_sec=_TRENDING_RATE_WINDOW_SEC,
+        max_calls=_TRENDING_RATE_MAX_CALLS,
+    )
 
 
 def _trending_parse_pubdate(raw: str):
@@ -960,11 +969,7 @@ def trending_topics():
     UI hides the panel silently. The endpoint never 5xx's the client.
     """
     try:
-        client_ip = (
-            request.headers.get('X-Forwarded-For', '').split(',')[0].strip()
-            or request.remote_addr
-            or 'unknown'
-        )
+        client_ip = _client_ip()
         if _trending_rate_limited(client_ip):
             return jsonify({
                 "success": True,
