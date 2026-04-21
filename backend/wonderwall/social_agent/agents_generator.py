@@ -25,7 +25,8 @@ from camel.messages import BaseMessage
 from camel.models import BaseModelBackend, ModelManager
 from camel.types import OpenAIBackendRole
 
-from wonderwall.social_agent import AgentGraph, SocialAgent
+from wonderwall.social_agent.agent import SocialAgent
+from wonderwall.social_agent.agent_graph import AgentGraph
 from wonderwall.social_platform import Channel, Platform
 from wonderwall.social_platform.config import Neo4jConfig, UserInfo
 from wonderwall.social_platform.typing import ActionType
